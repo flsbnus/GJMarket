@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Heart, Edit, Trash, ArrowLeft, User, MessageCircle, Send, X } from 'lucide-react';
-import useWebSocket from 'react-use-websocket';
 
 const PostDetail = () => {
   const { postId } = useParams();
@@ -27,12 +26,14 @@ const PostDetail = () => {
   const messagesContainerRef = useRef(null);
   const [socketConnected, setSocketConnected] = useState(false);
   const [socketError, setSocketError] = useState('');
+  const [reconnectAttempts, setReconnectAttempts] = useState(0);
+  const MAX_RECONNECT_ATTEMPTS = 5;
+  const RECONNECT_DELAY = 3000;
 
   // 현재 게시물의 찜 상태를 확인하는 함수
   const checkWishlistStatus = async (token, postId) => {
     try {
-      // 위시리스트 목록 가져오기
-      const response = await fetch('/api/wishlist/getmywishlist', {
+      const response = await fetch(`http://localhost:8080/api/wishlist/getmywishlist`, {
         method: 'GET',
         headers: {
           'Authorization': token,
@@ -46,85 +47,62 @@ const PostDetail = () => {
       }
 
       const wishlistItems = await response.json();
-      
-      // 현재 게시물이 위시리스트에 있는지 확인
-      const isInWishlist = Array.isArray(wishlistItems) && 
+      return Array.isArray(wishlistItems) && 
         wishlistItems.some(item => item.post && item.post.id === parseInt(postId));
-      
-      console.log(`게시물 ${postId}의 찜 상태:`, isInWishlist);
-      return isInWishlist;
     } catch (error) {
       console.error('위시리스트 상태 확인 오류:', error);
       return false;
     }
   };
 
-  useEffect(() => {
-    const fetchPostDetail = async () => {
-      try {
-        // 로그인 확인
-        const token = localStorage.getItem('jwtToken');
-        const currentUserId = localStorage.getItem('userId');
-        
-        if (!token) {
-          navigate('/signin');
-          return;
-        }
-
-        setUserId(currentUserId);
-        setIsLoading(true);
-        const response = await fetch(`/api/post/${postId}`, {
-          method: 'GET',
-          headers: {
-            'Authorization': token,
-            'Content-Type': 'application/json'
-          }
-        });
-
-        if (!response.ok) {
-          throw new Error('게시물을 불러오는데 실패했습니다.');
-        }
-
-        const data = await response.json();
-        setPost(data);
-        
-        // 현재 사용자가 게시물 작성자인지 확인
-        const isUserOwner = data.user?.id === parseInt(currentUserId);
-        setIsOwner(isUserOwner);
-        
-        // 찜 상태 확인
-        const wishlistStatus = await checkWishlistStatus(token, postId);
-        setIsLiked(wishlistStatus);
-
-        // 사용자의 채팅방 목록 조회
-        await fetchUserChatRooms(token);
-      } catch (error) {
-        console.error('게시물 상세 조회 오류:', error);
-        setError(error.message);
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    fetchPostDetail();
-    
-    // 30초마다 채팅방 목록 새로고침 (새 채팅을 확인하기 위해)
-    const chatRoomsInterval = setInterval(() => {
+  // 게시물 상세 정보 가져오기
+  const fetchPostDetail = async () => {
+    try {
       const token = localStorage.getItem('jwtToken');
-      if (token && isOwner) {
-        fetchUserChatRooms(token);
+      const currentUserId = localStorage.getItem('userId');
+      
+      if (!token) {
+        navigate('/signin');
+        return;
       }
-    }, 30000);
-    
-    return () => {
-      clearInterval(chatRoomsInterval);
-    };
-  }, [postId, navigate]);
+
+      setUserId(currentUserId);
+      setIsLoading(true);
+      
+      const response = await fetch(`http://localhost:8080/api/post/${postId}`, {
+        method: 'GET',
+        headers: {
+          'Authorization': token,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      if (!response.ok) {
+        throw new Error('게시물을 불러오는데 실패했습니다.');
+      }
+
+      const data = await response.json();
+      setPost(data);
+      
+      const isUserOwner = data.user?.id === parseInt(currentUserId);
+      setIsOwner(isUserOwner);
+      
+      const wishlistStatus = await checkWishlistStatus(token, postId);
+      setIsLiked(wishlistStatus);
+
+      await fetchUserChatRooms(token);
+    } catch (error) {
+      console.error('게시물 상세 조회 오류:', error);
+      setError(error.message);
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   // 사용자의 채팅방 목록 조회
   const fetchUserChatRooms = async (token) => {
     try {
-      const response = await fetch(`/api/users/${userId}/chatrooms`, {
+      const response = await fetch(`http://localhost:8080/api/users/${userId}/chatrooms`, {
         method: 'GET',
         headers: {
           'Authorization': token,
@@ -138,227 +116,141 @@ const PostDetail = () => {
       }
 
       const rooms = await response.json();
-      console.log('사용자 채팅방 목록:', rooms);
       setChatRooms(rooms);
       
-      // 현재 게시물에 대한 채팅방이 있는지 확인
       const existingRoom = rooms.find(room => room.postId === parseInt(postId));
       if (existingRoom) {
-        console.log('현재 게시물에 대한 채팅방 찾음:', existingRoom);
         setChatRoom(existingRoom);
       }
     } catch (error) {
       console.error('채팅방 목록 조회 오류:', error);
     }
   };
-  
-  // 웹소켓 연결 및 메시지 처리
-  // const setupWebSocket = (roomId) => {
-  //   if (!roomId) return null;
-    
-  //   const token = localStorage.getItem('jwtToken');
-  //   // Bearer 접두사 제거 (필요한 경우)
-  //   const cleanToken = token.replace('Bearer ', '');
-    
-  //   // URL에 토큰을 쿼리 파라미터로 추가
-  //   const socketUrl = `ws://localhost:8080/ws/chat/${roomId}?token=${encodeURIComponent(cleanToken)}`;
-    
-  //   console.log('웹소켓 연결 시도:', socketUrl);
-    
-  //   // 웹소켓 객체 생성
-  //   const socket = new WebSocket(socketUrl);
-    
-  //   socket.onopen = () => {
-  //     console.log('WebSocket 연결 성공');
-  //     setSocketConnected(true);
-  //     setSocketError('');
-      
-  //     // 연결 직후 초기화 메시지 전송 (필요한 경우)
-  //     try {
-  //       const initMessage = {
-  //         type: 'INIT',
-  //         chatRoomId: roomId,
-  //         userId: parseInt(userId)
-  //       };
-  //       socket.send(JSON.stringify(initMessage));
-  //     } catch (error) {
-  //       console.error('초기화 메시지 전송 오류:', error);
-  //     }
-  //   };
-    
-  //   socket.onmessage = (event) => {
-  //     try {
-  //       console.log('Raw message received:', event.data);
-  //       const receivedMessage = JSON.parse(event.data);
-  //       console.log('메시지 수신:', receivedMessage);
-        
-  //       // 수신된 메시지를 상태에 추가
-  //       setMessages(prev => {
-  //         // 중복 메시지 방지
-  //         const isDuplicate = prev.some(msg => 
-  //           (msg.id === receivedMessage.id && receivedMessage.id !== null) || 
-  //           (msg.content === receivedMessage.content && 
-  //            msg.sender?.id === receivedMessage.sender?.id &&
-  //            msg.content !== null && msg.content.trim() !== '')
-  //         );
-          
-  //         if (isDuplicate) return prev;
-          
-  //         return [...prev, receivedMessage];
-  //       });
-  //       scrollToBottom();
-  //     } catch (error) {
-  //       console.error('메시지 파싱 오류:', error);
-  //     }
-  //   };
-    
-  //   socket.onerror = (error) => {
-  //     console.error('WebSocket 오류:', error);
-  //     setSocketConnected(false);
-  //     setSocketError('웹소켓 연결 중 오류가 발생했습니다.');
-  //   };
-    
-  //   socket.onclose = (event) => {
-  //     console.log('WebSocket 연결 종료', event.code, event.reason);
-  //     setSocketConnected(false);
-      
-  //     // 연결이 의도치 않게 끊어진 경우 재연결 시도
-  //     if (event.code !== 1000) {
-  //       console.log('웹소켓 연결이 의도치 않게 종료되었습니다. 재연결 시도...');
-  //       setTimeout(() => {
-  //         if (isChatOpen) {
-  //           webSocketRef.current = setupWebSocket(roomId);
-  //         }
-  //       }, 3000);
-  //     }
-  //   };
-    
-  //   return socket;
-  // };
-  const setupWebSocket = (roomId) => {
-    // roomId 검증 강화
-    if (!roomId) {
-        console.error('유효하지 않은 채팅방 ID입니다.');
-        return null;
-    }
 
-    // 토큰 검증 강화
+  // 웹소켓 연결 설정
+  const setupWebSocket = (roomId) => {
+    if (!roomId) {
+      console.error('채팅방 ID가 없습니다.');
+      return null;
+    }
+    
     const token = localStorage.getItem('jwtToken');
     if (!token) {
-        console.error('인증 토큰이 존재하지 않습니다.');
-        return null;
+      console.error('인증 토큰이 없습니다.');
+      setSocketError('로그인이 필요합니다.');
+      return null;
     }
-
-    // 사용자 ID 검증 추가
-    const userId = localStorage.getItem('userId');
-    if (!userId) {
-        console.error('사용자 ID가 존재하지 않습니다.');
-        return null;
+    
+    const socketUrl = `ws://localhost:8080/ws/chat/${roomId}?token=${token}`;
+    
+    if (webSocketRef.current) {
+      webSocketRef.current.close();
     }
-
-    // Bearer 접두사 제거 및 토큰 트리밍
-    const cleanToken = token.replace('Bearer ', '').trim();
-
-    // 안전한 URL 생성
-    const socketUrl = `/ws/chat/${roomId}?token=${encodeURIComponent(cleanToken)}`;
-
-    console.log('웹소켓 연결 시도:', socketUrl);
-
+    
     try {
-        const socket = new WebSocket(socketUrl);
-
-        socket.onopen = () => {
-            console.log('WebSocket 연결 성공');
-            setSocketConnected(true);
-            setSocketError('');
-
-            // 안전한 초기화 메시지 전송
-            try {
-                const initMessage = {
-                    type: 'INIT',
-                    chatRoomId: roomId,
-                    userId: parseInt(userId, 10) // 명시적 기수 지정
-                };
-                socket.send(JSON.stringify(initMessage));
-            } catch (error) {
-                console.error('초기화 메시지 전송 오류:', error);
-            }
+      const socket = new WebSocket(socketUrl);
+      
+      // 연결 타임아웃 설정
+      const connectionTimeout = setTimeout(() => {
+        if (socket.readyState !== WebSocket.OPEN) {
+          console.error('웹소켓 연결 타임아웃');
+          socket.close();
+          setSocketError('서버 연결 시간이 초과되었습니다.');
+        }
+      }, 10000);
+      
+      socket.onopen = () => {
+        clearTimeout(connectionTimeout);
+        console.log('WebSocket 연결 성공');
+        setSocketConnected(true);
+        setSocketError('');
+        setReconnectAttempts(0);
+        
+        // 연결 직후 인증 메시지 전송
+        const authMessage = {
+          type: 'AUTH',
+          token: token.replace('Bearer ', '')
         };
-
-        socket.onmessage = (event) => {
-            try {
-                console.log('Raw message received:', event.data);
-                const receivedMessage = JSON.parse(event.data);
-                console.log('메시지 수신:', receivedMessage);
-
-                // 더 엄격한 중복 메시지 검사
-                setMessages(prev => {
-                    const isDuplicate = prev.some(msg => 
-                        (msg.id && receivedMessage.id && msg.id === receivedMessage.id) ||
-                        (msg.content === receivedMessage.content && 
-                         msg.sender?.id === receivedMessage.sender?.id &&
-                         receivedMessage.content?.trim() !== '')
-                    );
-
-                    return isDuplicate ? prev : [...prev, receivedMessage];
-                });
-
-                scrollToBottom();
-            } catch (error) {
-                console.error('메시지 파싱 오류:', error);
-            }
+        socket.send(JSON.stringify(authMessage));
+        
+        // 인증 후 채팅방 입장 메시지 전송
+        const joinMessage = {
+          type: 'JOIN',
+          chatRoomId: roomId,
+          userId: parseInt(userId),
+          role: isOwner ? 'SELLER' : 'BUYER'
         };
+        socket.send(JSON.stringify(joinMessage));
+      };
+      
+      socket.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          console.log('메시지 수신:', data);
 
-        socket.onerror = (error) => {
-            console.error('WebSocket 오류:', error);
-            setSocketConnected(false);
-            setSocketError('웹소켓 연결 중 오류가 발생했습니다.');
-        };
-
-        socket.onclose = (event) => {
-            console.log('WebSocket 연결 종료', event.code, event.reason);
-            setSocketConnected(false);
-
-            // 더 안전한 재연결 로직
-            if (event.code !== 1000 && isChatOpen) {
-                console.log('웹소켓 연결이 의도치 않게 종료되었습니다. 재연결 시도...');
+          switch (data.type) {
+            case 'CHAT':
+              setMessages(prev => {
+                const isDuplicate = prev.some(msg => 
+                  msg.id === data.message.id || 
+                  (msg.content === data.message.content && 
+                   msg.sender?.id === data.message.sender?.id &&
+                   msg.timestamp === data.message.timestamp)
+                );
                 
-                // 재연결 실패 시 최대 재시도 횟수 제한
-                const maxRetries = 3;
-                let retryCount = 0;
-
-                const attemptReconnect = () => {
-                    if (retryCount < maxRetries) {
-                        retryCount++;
-                        console.log(`재연결 시도 (${retryCount}/${maxRetries})`);
-                        
-                        setTimeout(() => {
-                            const newSocket = setupWebSocket(roomId);
-                            if (newSocket) {
-                                webSocketRef.current = newSocket;
-                            } else {
-                                attemptReconnect();
-                            }
-                        }, 3000 * retryCount); // 점진적 대기 시간
-                    } else {
-                        console.error('최대 재연결 횟수에 도달했습니다.');
-                        // 사용자에게 수동 새로고침 요청 등의 처리 가능
-                    }
-                };
-
-                attemptReconnect();
-            }
-        };
-
-        return socket;
+                if (isDuplicate) return prev;
+                return [...prev, data.message];
+              });
+              scrollToBottom();
+              break;
+              
+            case 'ERROR':
+              console.error('서버 오류:', data.message);
+              setSocketError(data.message);
+              break;
+              
+            case 'JOIN':
+              console.log('사용자 입장:', data);
+              break;
+              
+            case 'LEAVE':
+              console.log('사용자 퇴장:', data);
+              break;
+          }
+        } catch (error) {
+          console.error('메시지 파싱 오류:', error);
+        }
+      };
+      
+      socket.onclose = (event) => {
+        console.log('WebSocket 연결 종료:', event);
+        setSocketConnected(false);
+        if (event.code !== 1000) {
+          setSocketError('연결이 끊어졌습니다. 재연결을 시도합니다...');
+          if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+            setTimeout(() => {
+              setReconnectAttempts(prev => prev + 1);
+              setupWebSocket(roomId);
+            }, RECONNECT_DELAY);
+          }
+        }
+      };
+      
+      socket.onerror = (error) => {
+        console.error('WebSocket 오류:', error);
+        setSocketConnected(false);
+        setSocketError('웹소켓 연결 중 오류가 발생했습니다.');
+      };
+      
+      return socket;
     } catch (error) {
-        console.error('WebSocket 생성 중 예외:', error);
-        setSocketError('WebSocket 연결에 실패했습니다.');
-        return null;
+      console.error('WebSocket 생성 오류:', error);
+      setSocketError('웹소켓 연결 생성에 실패했습니다.');
+      return null;
     }
-};
+  };
 
-  // 채팅방 생성 함수
+  // 채팅방 생성
   const createChatRoom = async () => {
     if (isOwner) {
       alert('자신의 게시물에는 채팅을 시작할 수 없습니다.');
@@ -369,8 +261,7 @@ const PostDetail = () => {
       const token = localStorage.getItem('jwtToken');
       setIsChatLoading(true);
       
-      // 채팅방 생성 API 호출
-      const response = await fetch(`/api/post/${postId}/chatroom`, {
+      const response = await fetch(`http://localhost:8080/api/post/${postId}/chatroom`, {
         method: 'POST',
         headers: {
           'Authorization': token,
@@ -383,16 +274,13 @@ const PostDetail = () => {
       }
 
       const newChatRoom = await response.json();
-      console.log('생성된 채팅방:', newChatRoom);
       setChatRoom(newChatRoom);
       setIsChatOpen(true);
       
-      // 웹소켓 연결을 새로 설정
       if (webSocketRef.current) {
         webSocketRef.current.close();
       }
       
-      // 약간의 지연 후 웹소켓 연결 및 메시지 로드 (서버 처리 시간 고려)
       setTimeout(() => {
         webSocketRef.current = setupWebSocket(newChatRoom.id);
         loadChatMessages(newChatRoom.id);
@@ -405,12 +293,18 @@ const PostDetail = () => {
     }
   };
 
-  // 채팅 메시지 로드 함수
+  // 채팅 메시지 로드
   const loadChatMessages = async (roomId) => {
     try {
       const token = localStorage.getItem('jwtToken');
+      if (!token) {
+        console.error('토큰이 없습니다.');
+        return;
+      }
+
+      setIsChatLoading(true);
       
-      const response = await fetch(`/api/chatroom/${roomId}/recent`, {
+      const response = await fetch(`http://localhost:8080/api/chatroom/${roomId}/recent`, {
         method: 'GET',
         headers: {
           'Authorization': token,
@@ -423,21 +317,29 @@ const PostDetail = () => {
       }
 
       const messagesData = await response.json();
-      setMessages(messagesData);
       
-      // 스크롤을 최하단으로 이동
+      if (Array.isArray(messagesData)) {
+        setMessages(messagesData);
+      } else {
+        console.error('메시지 데이터 형식이 올바르지 않습니다:', messagesData);
+        setMessages([]);
+      }
+      
       scrollToBottom();
     } catch (error) {
       console.error('메시지 로드 오류:', error);
+      alert('메시지를 불러오는데 실패했습니다.');
+    } finally {
+      setIsChatLoading(false);
     }
   };
   
-  // 이전 메시지 로드 함수
+  // 이전 메시지 로드
   const loadMoreMessages = async (roomId, firstMessageId) => {
     try {
       const token = localStorage.getItem('jwtToken');
       
-      const response = await fetch(`/api/chatroom/${roomId}/before/${firstMessageId}`, {
+      const response = await fetch(`http://localhost:8080/api/chatroom/${roomId}/before/${firstMessageId}`, {
         method: 'GET',
         headers: {
           'Authorization': token,
@@ -458,34 +360,24 @@ const PostDetail = () => {
     }
   };
 
-  // 새 메시지 전송 함수
+  // 스크롤 최하단 이동
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  };
+
+  // 메시지 전송
   const sendMessage = async (e) => {
     e.preventDefault();
     
     if (!newMessage.trim() || !chatRoom) return;
-    
-    if (!webSocketRef.current || webSocketRef.current.readyState !== WebSocket.OPEN) {
-      alert('채팅 서버에 연결되지 않았습니다. 잠시 후 다시 시도해주세요.');
+
+    const token = localStorage.getItem('jwtToken');
+    if (!token) {
+      alert('로그인이 필요합니다.');
       return;
     }
 
     try {
-      // Postman에서 확인된 형식대로 메시지 객체 구성
-      const messageObj = {
-        chatRoomId: chatRoom.id,
-        senderId: parseInt(userId),
-        content: newMessage.trim(),
-        // 서버에서 sentAt은 자동으로 설정되므로 제외
-      };
-      
-      console.log('메시지 전송:', messageObj);
-      webSocketRef.current.send(JSON.stringify(messageObj));
-      
-      // 메시지 전송 후 입력창 초기화
-      setNewMessage('');
-      
-      // 자신의 메시지를 바로 화면에 표시 (낙관적 UI 업데이트)
-      // 서버에서 반환하는 형식과 일치하게 구성
       const optimisticMessage = {
         id: `temp-${Date.now()}`,
         sender: { 
@@ -493,81 +385,89 @@ const PostDetail = () => {
           nickname: localStorage.getItem('userNickname') || '나'
         },
         content: newMessage.trim(),
-        sentAt: new Date().toISOString()
+        sentAt: new Date().toISOString(),
+        isRead: false
       };
       
       setMessages(prev => [...prev, optimisticMessage]);
+      setNewMessage('');
       scrollToBottom();
+
+      if (webSocketRef.current && webSocketRef.current.readyState === WebSocket.OPEN) {
+        const messageObj = {
+          type: 'CHAT',
+          chatRoomId: chatRoom.id,
+          senderId: parseInt(userId),
+          content: newMessage.trim(),
+          timestamp: new Date().toISOString(),
+          isRead: false
+        };
+        
+        webSocketRef.current.send(JSON.stringify(messageObj));
+      } else {
+        console.error('웹소켓이 연결되어 있지 않습니다.');
+        setSocketError('실시간 연결이 끊어졌습니다. 페이지를 새로고침하여 다시 시도해주세요.');
+        
+        setMessages(prev => prev.filter(msg => msg.id !== optimisticMessage.id));
+      }
     } catch (error) {
       console.error('메시지 전송 오류:', error);
       alert('메시지 전송에 실패했습니다. 다시 시도해주세요.');
+      
+      setMessages(prev => prev.filter(msg => msg.id !== `temp-${Date.now()}`));
     }
   };
 
-  // 채팅창 토글 함수
+  // 채팅창 토글
   const toggleChat = async () => {
-    if (!isChatOpen) {
-      if (!chatRoom) {
-        await createChatRoom();
-      } else {
-        setIsChatOpen(true);
-        
-        // 이미 연결된 웹소켓이 없거나 닫혀있는 경우에만 새 연결 시도
-        if (!webSocketRef.current || webSocketRef.current.readyState !== WebSocket.OPEN) {
-          try {
-            console.log('웹소켓 연결 시도(토글):', chatRoom.id);
-            webSocketRef.current = setupWebSocket(chatRoom.id);
-          } catch (error) {
-            console.error('웹소켓 설정 오류:', error);
-            setSocketError('웹소켓 연결에 실패했습니다.');
-          }
-        }
-        
-        // 메시지를 로드합니다
-        await loadChatMessages(chatRoom.id);
-        
-        // 화면을 하단으로 스크롤합니다
-        setTimeout(scrollToBottom, 300);
-      }
-    } else {
-      setIsChatOpen(false);
+    if (!chatRoom) {
+      await createChatRoom();
     }
-  };
-
-  // 스크롤 최하단 이동 함수
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    navigate(`/chatroom/${chatRoom.id}`);
   };
 
   useEffect(() => {
-    // 채팅창이 열려있을 때 메시지가 변경되면 스크롤을 최하단으로 이동
+    fetchPostDetail();
+    
+    const chatRoomsInterval = setInterval(() => {
+      const token = localStorage.getItem('jwtToken');
+      if (token && isOwner) {
+        fetchUserChatRooms(token);
+      }
+    }, 30000);
+    
+    return () => {
+      clearInterval(chatRoomsInterval);
+      if (webSocketRef.current) {
+        webSocketRef.current.close();
+        webSocketRef.current = null;
+      }
+    };
+  }, [postId]);
+
+  useEffect(() => {
     if (isChatOpen) {
       scrollToBottom();
     }
   }, [messages, isChatOpen]);
   
-  // 채팅방이 변경되면 웹소켓 연결을 재설정
   useEffect(() => {
     if (chatRoom && isChatOpen) {
-      // 기존 연결이 있으면 닫기
       if (webSocketRef.current) {
         webSocketRef.current.close();
         webSocketRef.current = null;
       }
       
       try {
-        // 새 웹소켓 연결 설정
         webSocketRef.current = setupWebSocket(chatRoom.id);
       } catch (error) {
         console.error('웹소켓 설정 오류:', error);
         setSocketError('웹소켓 연결에 실패했습니다.');
       }
       
-      // 채팅 메시지 로드
       loadChatMessages(chatRoom.id);
     }
     
-    // 컴포넌트가 언마운트되거나 채팅방이 변경될 때 웹소켓 연결 종료
     return () => {
       if (webSocketRef.current) {
         webSocketRef.current.close();
@@ -729,7 +629,7 @@ const PostDetail = () => {
     <div className="max-w-4xl mx-auto mt-8 p-4">
       <button 
         onClick={handleGoBack}
-        className="flex items-center text-gray-600 hover:text-gray-900 mb-4"
+        className="flex items-center text-gray-600 hover:text-gray-900 mb-4 break-words"
       >
         <ArrowLeft className="w-5 h-5 mr-1" />
         목록으로 돌아가기
@@ -777,7 +677,7 @@ const PostDetail = () => {
               )}
             </>
           ) : (
-            <div className="flex items-center justify-center h-full text-gray-500">
+            <div className="flex items-center justify-center h-full text-gray-500 break-words">
               이미지가 없습니다
             </div>
           )}
@@ -788,12 +688,12 @@ const PostDetail = () => {
           <div className="flex justify-between items-start mb-4">
             <div>
               <div className="flex items-center mb-2">
-                <span className={`text-xs px-2 py-1 rounded-full ${statusLabel.class}`}>
+                <span className={`text-xs px-2 py-1 rounded-full ${statusLabel.class} break-words`}>
                   {statusLabel.text}
                 </span>
-                <h1 className="text-2xl font-bold ml-2">{post.title}</h1>
+                <h1 className="text-2xl font-bold ml-2 break-words">{post.title}</h1>
               </div>
-              <p className="text-xl font-semibold text-blue-600">
+              <p className="text-xl font-semibold text-blue-600 break-words">
                 {formatPrice(post.price)}
               </p>
             </div>
@@ -825,21 +725,21 @@ const PostDetail = () => {
           </div>
           
           {/* 작성자 정보 */}
-          <div className="flex items-center mb-4 text-sm text-gray-500">
+          <div className="flex items-center mb-4 text-sm text-gray-500 flex-wrap">
             <User className="w-4 h-4 mr-1" />
-            <span>{post.user?.nickname || '익명'}</span>
+            <span className="break-words">{post.user?.nickname || '익명'}</span>
             <span className="mx-2">•</span>
-            <span>{new Date(post.createdAt).toLocaleDateString()}</span>
+            <span className="break-words">{new Date(post.createdAt).toLocaleDateString()}</span>
             <span className="mx-2">•</span>
-            <span>조회 {post.viewCount}</span>
+            <span className="break-words">조회 {post.viewCount}</span>
             <span className="mx-2">•</span>
-            <span>찜 {post.wishlistCount}</span>
+            <span className="break-words">찜 {post.wishlistCount}</span>
           </div>
           
           <hr className="my-4" />
           
           {/* 본문 내용 */}
-          <div className="whitespace-pre-line mt-4 min-h-48">
+          <div className="whitespace-pre-line mt-4 min-h-48 break-words overflow-wrap-break-word">
             {post.content}
           </div>
           
@@ -864,9 +764,7 @@ const PostDetail = () => {
                           key={room.id} 
                           className="flex justify-between items-center p-3 bg-gray-50 rounded hover:bg-gray-100 cursor-pointer"
                           onClick={() => {
-                            console.log('채팅방 선택됨:', room);
-                            setChatRoom(room);
-                            setIsChatOpen(true);
+                            navigate(`/chatroom/${room.id}`);
                           }}
                         >
                           <div className="flex items-center">
@@ -890,14 +788,14 @@ const PostDetail = () => {
               <div className="flex justify-end space-x-2 mt-6">
                 <button
                   onClick={handleEdit}
-                  className="flex items-center px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
+                  className="flex items-center px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 break-words"
                 >
                   <Edit className="w-4 h-4 mr-1" />
                   수정
                 </button>
                 <button
                   onClick={handleDelete}
-                  className="flex items-center px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600"
+                  className="flex items-center px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600 break-words"
                 >
                   <Trash className="w-4 h-4 mr-1" />
                   삭제
@@ -1017,14 +915,13 @@ const PostDetail = () => {
               onChange={(e) => setNewMessage(e.target.value)}
               placeholder="메시지를 입력하세요..."
               className="flex-1 border border-gray-300 rounded-l-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
-              disabled={!socketConnected}
             />
             <button
               type="submit"
               className={`text-white rounded-r-lg px-3 py-2 ${
-                socketConnected ? 'bg-blue-500 hover:bg-blue-600' : 'bg-gray-400 cursor-not-allowed'
+                newMessage.trim() ? 'bg-blue-500 hover:bg-blue-600' : 'bg-gray-400 cursor-not-allowed'
               }`}
-              disabled={!socketConnected || !newMessage.trim()}
+              disabled={!newMessage.trim()}
             >
               <Send className="w-4 h-4" />
             </button>

@@ -4,14 +4,17 @@
   "private": true,
   "proxy": "http://localhost:8080",
   "dependencies": {
+    "@stomp/stompjs": "^7.1.1",
     "axios": "^1.7.9",
     "cra-template": "1.2.0",
+    "http-proxy-middleware": "^3.0.5",
     "lucide-react": "^0.471.1",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-router-dom": "^7.1.1",
     "react-scripts": "5.0.1",
     "react-use-websocket": "^4.13.0",
+    "sockjs-client": "^1.6.1",
     "web-vitals": "^4.2.4"
   },
   "scripts": {

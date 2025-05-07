@@ -1,11 +1,11 @@
-import React, { useState, useEffect, createContext, useContext, useRef } from 'react';
+import React, { useState, useEffect, createContext } from 'react';
 import { BrowserRouter as Router, Routes, Route, Link, useLocation, useNavigate } from 'react-router-dom';
 import UserManagement from './components/UserManagement';
 import WishlistManagement from './components/WishlistManagement';
-import RatingManagement from './components/RatingManagement';
+import RatingManagement from './components/rating/RatingManagement';
 import TransactionManagement from './components/TransactionManagement';
-import PostsList from './components/post/PostList';  // 게시물 목록 컴포넌트 추가
-import PostForm from './components/post/PostForm';    // 게시물 작성 컴포넌트 추가
+import PostsList from './components/post/PostList';
+import PostForm from './components/post/PostForm';
 import { User, Heart, Star, History, Menu, X, LogIn, LogOut, MessageSquare, MessageCircle } from 'lucide-react';
 import './index.css';
 
@@ -18,137 +18,6 @@ import CreateChatRoom from './components/chat/CreateChatRoom';
 // 로그인 상태를 앱 전체에서 공유하기 위한 컨텍스트
 export const AuthContext = React.createContext();
 
-// WebSocket 컨텍스트 생성
-export const WebSocketContext = createContext(null);
-
-// WebSocket 컨텍스트 프로바이더 컴포넌트
-export const WebSocketProvider = ({ children }) => {
-  const [connected, setConnected] = useState(false);
-  const webSocketRef = useRef(null);
-  const reconnectTimeoutRef = useRef(null);
-  const [messageListeners, setMessageListeners] = useState([]);
-
-  // 웹소켓 연결 설정
-  const setupWebSocket = (chatRoomId) => {
-    const token = localStorage.getItem('jwtToken');
-    if (!token || !chatRoomId) return null;
-
-    try {
-      // 기존 웹소켓 연결 종료
-      if (webSocketRef.current && webSocketRef.current.readyState === WebSocket.OPEN) {
-        webSocketRef.current.close();
-      }
-
-      // 웹소켓 URL 설정
-      const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsHost = process.env.REACT_APP_SERVER_URL || window.location.host;
-      const wsUrl = `${wsProtocol}//${wsHost.replace(/^https?:\/\//, '')}/ws/chat/${chatRoomId}`;
-      
-      console.log('Connecting to WebSocket URL:', wsUrl);
-
-      // 웹소켓 객체 생성
-      const ws = new WebSocket(wsUrl);
-
-      ws.onopen = () => {
-        console.log('WebSocket 연결 성공');
-        setConnected(true);
-        
-        // Authorization 헤더를 직접 설정할 수 없으므로, 
-        // 웹소켓 핸들러에서 처리할 수 있는 방식으로 토큰 정보 포함
-        // 첫 메시지로 인증 정보 전송
-        ws.send(JSON.stringify({
-          type: 'AUTHENTICATION',
-          token: token
-        }));
-      };
-
-      ws.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data);
-          console.log('WebSocket 메시지 수신:', data);
-          
-          // 등록된 모든 리스너에게 메시지 전달
-          messageListeners.forEach(listener => {
-            try {
-              listener(data);
-            } catch (listenerError) {
-              console.error('메시지 리스너 오류:', listenerError);
-            }
-          });
-        } catch (error) {
-          console.error('메시지 파싱 오류:', error);
-        }
-      };
-
-      ws.onclose = () => {
-        console.log('WebSocket 연결 종료');
-        setConnected(false);
-        
-        // 자동 재연결 시도
-        if (reconnectTimeoutRef.current) {
-          clearTimeout(reconnectTimeoutRef.current);
-        }
-        reconnectTimeoutRef.current = setTimeout(() => {
-          setupWebSocket(chatRoomId);
-        }, 3000); // 3초 후 재연결 시도
-      };
-
-      ws.onerror = (error) => {
-        console.error('WebSocket 오류:', error);
-      };
-
-      webSocketRef.current = ws;
-      return ws;
-    } catch (error) {
-      console.error('WebSocket 설정 오류:', error);
-      return null;
-    }
-  };
-
-  // 메시지 전송 함수
-  const sendMessage = (content) => {
-    if (webSocketRef.current && webSocketRef.current.readyState === WebSocket.OPEN) {
-      webSocketRef.current.send(content);
-      return true;
-    }
-    return false;
-  };
-
-  // 메시지 리스너 등록 함수
-  const addMessageListener = (listener) => {
-    setMessageListeners(prev => [...prev, listener]);
-    return () => {
-      setMessageListeners(prev => prev.filter(l => l !== listener));
-    };
-  };
-
-  // 컴포넌트 언마운트 시 웹소켓 연결 종료
-  useEffect(() => {
-    return () => {
-      if (webSocketRef.current) {
-        webSocketRef.current.close();
-      }
-      if (reconnectTimeoutRef.current) {
-        clearTimeout(reconnectTimeoutRef.current);
-      }
-    };
-  }, []);
-
-  return (
-    <WebSocketContext.Provider
-      value={{
-        connected,
-        setupWebSocket,
-        sendMessage,
-        addMessageListener,
-        webSocket: webSocketRef.current
-      }}
-    >
-      {children}
-    </WebSocketContext.Provider>
-  );
-};
-
 // 네비게이션 링크 컴포넌트
 const NavLink = ({ to, icon: Icon, children }) => {
   const location = useLocation();
@@ -157,10 +26,10 @@ const NavLink = ({ to, icon: Icon, children }) => {
   return (
     <Link
       to={to}
-      className={`flex items-center space-x-2 p-3 rounded-lg transition-colors ${
+      className={`flex items-center space-x-3 p-4 rounded-xl transition-all duration-200 ${
         isActive
-          ? 'bg-blue-500 text-white'
-          : 'text-gray-600 hover:bg-gray-100'
+          ? 'bg-indigo-50 text-indigo-600 font-medium'
+          : 'text-gray-600 hover:bg-gray-50 hover:text-indigo-500'
       }`}
     >
       <Icon className="w-5 h-5" />
@@ -170,7 +39,6 @@ const NavLink = ({ to, icon: Icon, children }) => {
 };
 
 // 로그인/로그아웃 버튼 컴포넌트
-
 const AuthButton = () => {
   const navigate = useNavigate();
   const { isLoggedIn, username, checkAuth } = React.useContext(AuthContext);
@@ -183,7 +51,7 @@ const AuthButton = () => {
   const SERVER_URL = process.env.REACT_APP_SERVER_URL || 'http://localhost:8080';
   
   // 기본 프로필 이미지 설정
-  const defaultProfileImage = '/default-profile.png';
+  const defaultProfileImage = `${SERVER_URL}/images/profile/default-profile.png`;
 
   // 사용자 프로필 정보 가져오기
   React.useEffect(() => {
@@ -256,16 +124,22 @@ const AuthButton = () => {
   
   // 프로필 이미지 전체 URL 생성 함수
   const getProfileImageUrl = (relativePath) => {
-    if (!relativePath) return defaultProfileImage;
+    if (!relativePath) {
+      return defaultProfileImage;
+    }
+    
     // 이미 전체 URL인 경우 그대로 반환
-    if (relativePath.startsWith('http')) return relativePath;
-    // 서버의 이미지 URL 형식에 맞게 조정
-    return `${SERVER_URL}/images${relativePath}`;
+    if (relativePath.startsWith('http')) {
+      return relativePath;
+    }
+    
+    // 확인된 정확한 URL 패턴 사용
+    return `${SERVER_URL}/images/profile/${relativePath}`;
   };
-  
-  // 이미지 로드 에러 처리
+
+  // 이미지 로드 에러 처리 - 단순화
   const handleImageError = (e) => {
-    console.warn('이미지 로드 오류, 기본 이미지로 대체됩니다.');
+    console.warn('이미지 로드 오류, 기본 이미지로 대체합니다.');
     e.target.src = defaultProfileImage;
   };
 
@@ -274,18 +148,18 @@ const AuthButton = () => {
       {isLoggedIn ? (
         <>
           {/* 프로필 이미지 */}
-          <div className="mr-2">
+          <div className="mr-3">
             <img
               src={getProfileImageUrl(profileImage)}
               alt="Profile"
-              className="w-8 h-8 rounded-full object-cover border border-gray-200"
+              className="w-10 h-10 rounded-full object-cover border-2 border-indigo-100"
               onError={handleImageError}
             />
           </div>
-          <span className="text-sm mr-2 hidden md:inline">{username}님</span>
+          <span className="text-sm mr-3 hidden md:inline text-gray-600">{username}님</span>
           <button
             onClick={handleLogout}
-            className="flex items-center space-x-1 text-red-500 hover:text-red-700"
+            className="flex items-center space-x-2 text-gray-600 hover:text-red-500 transition-colors duration-200"
           >
             <LogOut className="w-5 h-5" />
             <span className="hidden md:inline">로그아웃</span>
@@ -294,7 +168,7 @@ const AuthButton = () => {
       ) : (
         <button
           onClick={handleLogin}
-          className="flex items-center space-x-1 text-blue-500 hover:text-blue-700"
+          className="flex items-center space-x-2 text-indigo-600 hover:text-indigo-700 transition-colors duration-200"
         >
           <LogIn className="w-5 h-5" />
           <span className="hidden md:inline">로그인</span>
@@ -308,12 +182,12 @@ const AuthButton = () => {
 const Sidebar = ({ isOpen, onClose }) => {
   return (
     <div
-      className={`fixed top-0 left-0 h-full bg-white w-64 shadow-lg transform transition-transform duration-200 ease-in-out ${
+      className={`fixed top-0 left-0 h-full bg-white w-72 shadow-lg transform transition-transform duration-300 ease-in-out ${
         isOpen ? 'translate-x-0' : '-translate-x-full'
       } lg:translate-x-0 z-30`}
     >
-      <div className="p-4">
-        <h1 className="text-xl font-bold mb-8">당근마켓 클론</h1>
+      <div className="p-6">
+        <h1 className="text-2xl font-bold mb-10 text-indigo-600">한루미</h1>
         <nav className="space-y-2">
           <NavLink to="/user" icon={User}>
             회원정보관리
@@ -327,7 +201,7 @@ const Sidebar = ({ isOpen, onClose }) => {
           <NavLink to="/chats" icon={MessageCircle}>
             채팅
           </NavLink>
-          <NavLink to="/rating" icon={Star}>
+          <NavLink to="/ratings" icon={Star}>
             별점관리
           </NavLink>
           <NavLink to="/transactions" icon={History}>
@@ -367,22 +241,22 @@ const AppContent = () => {
         <div className="flex items-center justify-between p-4">
           <button
             onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-            className="p-2 hover:bg-gray-100 rounded-lg"
+            className="p-2 hover:bg-gray-50 rounded-lg transition-colors duration-200"
           >
             {isSidebarOpen ? (
-              <X className="w-6 h-6" />
+              <X className="w-6 h-6 text-gray-600" />
             ) : (
-              <Menu className="w-6 h-6" />
+              <Menu className="w-6 h-6 text-gray-600" />
             )}
           </button>
-          <h1 className="text-lg font-bold">당근마켓 클론</h1>
+          <h1 className="text-xl font-bold text-indigo-600">한루미</h1>
           <AuthButton />
         </div>
       </div>
       
       {/* 데스크톱 헤더 */}
-      <div className="hidden lg:flex justify-between items-center bg-white shadow-sm py-2 px-4 pr-8">
-        <h1 className="text-xl font-bold ml-64">당근마켓 클론</h1>
+      <div className="hidden lg:flex justify-between items-center bg-white shadow-sm py-4 px-6 pr-8">
+        <h1 className="text-2xl font-bold ml-72 text-indigo-600">한루미</h1>
         <AuthButton />
       </div>
 
@@ -398,13 +272,13 @@ const AppContent = () => {
       <Sidebar isOpen={isSidebarOpen} onClose={() => setIsSidebarOpen(false)} />
 
       {/* 메인 컨텐츠 */}
-      <div className="lg:pl-64 pt-14 lg:pt-4">
+      <div className="lg:pl-72 pt-14 lg:pt-4">
         <main className="p-4">
           <Routes>
             <Route path="/" element={<WishlistManagement />} />
             <Route path="/user" element={<UserManagement />} />
             <Route path="/wishlist" element={<WishlistManagement />} />
-            <Route path="/rating" element={<RatingManagement />} />
+            <Route path="/ratings" element={<RatingManagement />} />
             <Route path="/transactions" element={<TransactionManagement />} />
             <Route path="/signin" element={<UserManagement />} />
             <Route path="/signup" element={<UserManagement />} />
@@ -464,9 +338,7 @@ const App = () => {
   return (
     <Router>
       <AuthContext.Provider value={authState}>
-        <WebSocketProvider>
-          <AppContent />
-        </WebSocketProvider>
+        <AppContent />
       </AuthContext.Provider>
     </Router>
   );

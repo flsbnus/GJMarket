@@ -1,11 +1,12 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Send, MoreVertical, Image, ChevronUp } from 'lucide-react';
+import { connectWebSocket, sendMessage, addMessageListener, disconnectWebSocket } from '../../utils/websoket-hendler';
 
 const ChatRoom = () => {
   const { roomId } = useParams();
   const navigate = useNavigate();
-  const [messagesData, setMessagesData] = useState([]);
+  const [messages, setMessages] = useState([]);
   const [newMessage, setNewMessage] = useState('');
   const [roomInfo, setRoomInfo] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -15,302 +16,272 @@ const ChatRoom = () => {
   const [connected, setConnected] = useState(false);
   const messagesEndRef = useRef(null);
   const messagesContainerRef = useRef(null);
-  const webSocketRef = useRef(null);
-  
-  // 현재 사용자 ID
   const currentUserId = localStorage.getItem('userId');
-  
   const SERVER_URL = process.env.REACT_APP_SERVER_URL || 'http://localhost:8080';
-  const WS_URL = process.env.REACT_APP_WS_URL || 'ws://localhost:8080';
 
   // 웹소켓 연결 설정
   useEffect(() => {
     if (!roomId) return;
-    
+
+    const token = localStorage.getItem('jwtToken');
+    if (!token) {
+      navigate('/signin');
+      return;
+    }
+
     // 웹소켓 연결
-    const connectWebSocket = () => {
-      const token = localStorage.getItem('jwtToken');
-      const socket = new WebSocket(`${WS_URL}/ws/chat/${roomId}?token=${token}`);
-      
-      webSocketRef.current = socket;
-      
-      // 웹소켓 이벤트 핸들러
-      socket.onopen = () => {
-        console.log('웹소켓 연결 성공');
-        setConnected(true);
-      };
-      
-      socket.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data);
-          console.log('메시지 수신:', data);
-          
-          // 수신된 메시지를 메시지 목록에 추가
-          setMessagesData(prevMessages => {
-            // 이미 같은 ID의 메시지가 있는지 확인
-            if (data.id && prevMessages.some(msg => msg.id === data.id)) {
-              return prevMessages;
-            }
-            return [...prevMessages, data];
-          });
-          
-          // 새 메시지가 추가되면 스크롤을 아래로 이동
-          scrollToBottom();
-        } catch (e) {
-          console.error('메시지 파싱 오류:', e);
-        }
-      };
-      
-      socket.onclose = (event) => {
-        console.log('웹소켓 연결 종료:', event.code, event.reason);
-        setConnected(false);
-        
-        // 비정상 종료인 경우 재연결 시도
-        if (event.code !== 1000) {
-          console.log('웹소켓 재연결 시도...');
-          setTimeout(connectWebSocket, 3000);
-        }
-      };
-      
-      socket.onerror = (error) => {
-        console.error('웹소켓 오류:', error);
-        setConnected(false);
-      };
+    const connect = () => {
+      console.log('채팅방 연결 시도:', roomId);
+      connectWebSocket(roomId, token);
     };
-    
-    connectWebSocket();
-    
-    // 컴포넌트 언마운트 시 웹소켓 연결 종료
+
+    // 메시지 리스너 설정
+    const handleMessage = (data) => {
+      console.log('메시지 수신:', data);
+      setMessages(prev => {
+        // 이미 같은 ID의 메시지가 있는지 확인
+        if (data.id && prev.some(msg => msg.id === data.id)) {
+          return prev;
+        }
+        return [...prev, data];
+      });
+      scrollToBottom();
+    };
+
+    // 연결 상태 변경 리스너
+    const handleConnectionChange = (event) => {
+      setConnected(event.detail.connected);
+      if (!event.detail.connected) {
+        setError('연결이 끊어졌습니다. 재연결을 시도합니다...');
+      } else {
+        setError(null);
+      }
+    };
+
+    // 이벤트 리스너 등록
+    const removeMessageListener = addMessageListener(handleMessage);
+    window.addEventListener('websocketStatusChange', handleConnectionChange);
+
+    // 초기 연결
+    connect();
+
+    // 컴포넌트 언마운트 시 정리
     return () => {
-      if (webSocketRef.current) {
-        webSocketRef.current.close();
-      }
+      removeMessageListener();
+      window.removeEventListener('websocketStatusChange', handleConnectionChange);
+      disconnectWebSocket();
     };
-  }, [roomId, WS_URL]);
-  
-  // 채팅방 정보 로드
-  useEffect(() => {
-    const fetchRoomInfo = async () => {
-      try {
-        const token = localStorage.getItem('jwtToken');
-        
-        const response = await fetch(`${SERVER_URL}/api/chatroom/${roomId}/info`, {
-          method: 'GET',
-          headers: {
-            'Authorization': token,
-            'Accept': 'application/json'
-          }
-        });
-        
-        if (!response.ok) {
-          throw new Error('채팅방 정보를 불러오는데 실패했습니다.');
-        }
-        
-        const data = await response.json();
-        setRoomInfo(data);
-      } catch (error) {
-        console.error('채팅방 정보 로딩 오류:', error);
-        setError(error.message);
-      }
-    };
-    
-    fetchRoomInfo();
-  }, [roomId, SERVER_URL]);
-  
+  }, [roomId, navigate]);
+
   // 최근 메시지 로드
   useEffect(() => {
     const fetchRecentMessages = async () => {
+      if (!roomId) return;
+
       try {
         const token = localStorage.getItem('jwtToken');
-        
+        if (!token) {
+          navigate('/signin');
+          return;
+        }
+
         setLoading(true);
         const response = await fetch(`${SERVER_URL}/api/chatroom/${roomId}/recent?size=20`, {
-          method: 'GET',
           headers: {
             'Authorization': token,
             'Accept': 'application/json'
           }
         });
-        
+
         if (!response.ok) {
           throw new Error('채팅 메시지를 불러오는데 실패했습니다.');
         }
-        
+
         const data = await response.json();
-        setMessagesData(data);
-        setHasMore(data.length >= 20); // 서버에서 기본 20개 메시지를 반환하므로
+        // 메시지를 날짜 최신순으로 정렬
+        const sortedMessages = data.sort((a, b) => {
+          const dateA = new Date(a.sentAt);
+          const dateB = new Date(b.sentAt);
+          return dateA - dateB;
+        });
+        setMessages(sortedMessages);
+        setHasMore(data.length >= 20);
+        constructRoomInfo(data);
       } catch (error) {
         console.error('채팅 메시지 로딩 오류:', error);
-        setError(error.message);
+        setError('메시지를 불러올 수 없습니다.');
       } finally {
         setLoading(false);
       }
     };
-    
-    if (roomId) {
-      fetchRecentMessages();
+
+    fetchRecentMessages();
+  }, [roomId, SERVER_URL, navigate]);
+
+  // 채팅방 정보 구성
+  const constructRoomInfo = (messages) => {
+    if (!messages || messages.length === 0) {
+      setRoomInfo({
+        id: roomId,
+        otherUserNickname: '상대방',
+        postTitle: null
+      });
+      return;
     }
-  }, [roomId, SERVER_URL]);
-  
-  // 메시지가 로드되면 스크롤을 맨 아래로 이동
-  useEffect(() => {
-    if (!loading && messagesData.length > 0) {
-      scrollToBottom();
+
+    try {
+      const otherUserMessage = messages.find(msg => 
+        msg.sender && msg.sender.id && msg.sender.id.toString() !== currentUserId
+      );
+
+      const firstMessage = messages[0];
+      const chatRoomInfo = firstMessage.chatRoom || { id: roomId };
+
+      setRoomInfo({
+        id: chatRoomInfo.id || roomId,
+        postId: chatRoomInfo.postId,
+        otherUserNickname: otherUserMessage?.sender?.nickname || '상대방',
+        postTitle: chatRoomInfo.postTitle
+      });
+    } catch (err) {
+      console.error('채팅방 정보 구성 오류:', err);
+      setRoomInfo({
+        id: roomId,
+        otherUserNickname: '상대방',
+        postTitle: null
+      });
     }
-  }, [loading, messagesData]);
-  
+  };
+
   // 이전 메시지 로드
   const loadPreviousMessages = async () => {
-    if (loadingMore || !hasMore || messagesData.length === 0) return;
-    
+    if (loadingMore || !hasMore || messages.length === 0) return;
+
     try {
       const token = localStorage.getItem('jwtToken');
-      const oldestMessageId = messagesData[0].id;
-      
+      const oldestMessageId = messages[0].id;
+
       setLoadingMore(true);
       const response = await fetch(`${SERVER_URL}/api/chatroom/${roomId}/before/${oldestMessageId}?size=20`, {
-        method: 'GET',
         headers: {
           'Authorization': token,
           'Accept': 'application/json'
         }
       });
-      
+
       if (!response.ok) {
         throw new Error('이전 메시지를 불러오는데 실패했습니다.');
       }
-      
+
       const data = await response.json();
       
       if (data.length === 0) {
         setHasMore(false);
       } else {
-        // 스크롤 위치 유지를 위한 현재 스크롤 높이 저장
-        const scrollContainer = messagesContainerRef.current;
-        const scrollHeight = scrollContainer.scrollHeight;
+        // 이전 메시지도 날짜순으로 정렬
+        const sortedMessages = data.sort((a, b) => {
+          const dateA = new Date(a.sentAt);
+          const dateB = new Date(b.sentAt);
+          return dateA - dateB;
+        });
         
-        setMessagesData(prevMessages => [...data, ...prevMessages]);
-        
-        // 새 메시지가 추가된 후 스크롤 위치 조정
-        setTimeout(() => {
-          const newScrollHeight = scrollContainer.scrollHeight;
-          scrollContainer.scrollTop = newScrollHeight - scrollHeight;
-        }, 100);
-        
-        // 가져온 메시지가 20개 미만이면 더 이상 메시지가 없음
-        if (data.length < 20) {
-          setHasMore(false);
-        }
+        setMessages(prev => [...sortedMessages, ...prev]);
+        setHasMore(data.length >= 20);
       }
     } catch (error) {
       console.error('이전 메시지 로딩 오류:', error);
-      setError(error.message);
+      setError('이전 메시지를 불러올 수 없습니다.');
     } finally {
       setLoadingMore(false);
     }
   };
-  
-  // 스크롤 이벤트 핸들러
-  const handleScroll = () => {
-    const { scrollTop } = messagesContainerRef.current;
-    
-    // 스크롤이 맨 위에 가까워지면 이전 메시지 로드
-    if (scrollTop < 50 && !loadingMore && hasMore) {
-      loadPreviousMessages();
+
+  // 스크롤 관련 함수들
+  const scrollToBottom = () => {
+    if (messagesContainerRef.current) {
+      const scrollHeight = messagesContainerRef.current.scrollHeight;
+      messagesContainerRef.current.scrollTo({
+        top: scrollHeight,
+        behavior: 'smooth'
+      });
     }
   };
-  
+
+  // 메시지가 추가될 때마다 스크롤
+  useEffect(() => {
+    if (messages.length > 0) {
+      scrollToBottom();
+    }
+  }, [messages]);
+
   // 메시지 전송
   const handleSendMessage = (e) => {
-    e.preventDefault();
+    if (e) {
+      e.preventDefault();
+    }
     
-    if (!newMessage.trim() || !connected || !webSocketRef.current) return;
+    if (!newMessage.trim() || !connected) return;
     
     try {
-      const messageData = {
-        content: newMessage,
-        senderId: currentUserId,
-        chatroomId: roomId,
-        timestamp: new Date().toISOString()
-      };
-      
-      // 웹소켓으로 메시지 전송
-      webSocketRef.current.send(JSON.stringify(messageData));
-      
-      // 입력 필드 초기화
+      sendMessage(newMessage.trim());
       setNewMessage('');
+      // 메시지 전송 후 스크롤
+      setTimeout(scrollToBottom, 100);
     } catch (error) {
       console.error('메시지 전송 오류:', error);
-      setError('메시지를 전송할 수 없습니다. 다시 시도해주세요.');
+      setError('메시지 전송에 실패했습니다.');
     }
   };
-  
-  // 스크롤을 맨 아래로 이동하는 함수
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  };
-  
-  // 날짜 포맷팅 함수
+
+  // 날짜 포맷팅 함수들
   const formatTime = (dateString) => {
+    if (!dateString) return '';
     const date = new Date(dateString);
     return date.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' });
   };
-  
-  // 날짜 변경 여부 확인 함수
-  const isNewDate = (current, previous) => {
-    if (!previous) return true;
-    
-    const currentDate = new Date(current.sentAt || current.timestamp).toLocaleDateString();
-    const previousDate = new Date(previous.sentAt || previous.timestamp).toLocaleDateString();
-    
-    return currentDate !== previousDate;
-  };
-  
-  // 날짜 표시 형식
+
   const formatDate = (dateString) => {
+    if (!dateString) return '';
     const date = new Date(dateString);
     return date.toLocaleDateString('ko-KR', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' });
   };
-  
+
+  const isNewDate = (current, previous) => {
+    if (!previous) return true;
+    if (!current.sentAt && !previous.sentAt) return false;
+    
+    const currentDate = new Date(current.sentAt).toLocaleDateString();
+    const previousDate = new Date(previous.sentAt).toLocaleDateString();
+    
+    return currentDate !== previousDate;
+  };
+
+  // 채팅방 나가기
+  const leaveRoom = () => {
+    if (window.confirm('채팅방을 나가시겠습니까?')) {
+      navigate('/chats');
+    }
+  };
+
   // 프로필 이미지 URL 생성 함수
   const getProfileImageUrl = (relativePath) => {
     if (!relativePath) return '/default-profile.png';
     if (relativePath.startsWith('http')) return relativePath;
-    return `${SERVER_URL}/images${relativePath}`;
-  };
-  
-  // 채팅방 나가기
-  const leaveRoom = async () => {
-    if (window.confirm('채팅방을 나가시겠습니까?')) {
-      try {
-        const token = localStorage.getItem('jwtToken');
-        
-        const response = await fetch(`${SERVER_URL}/api/chatroom/${roomId}/leave`, {
-          method: 'POST',
-          headers: {
-            'Authorization': token
-          }
-        });
-        
-        if (response.ok) {
-          navigate('/chats');
-        } else {
-          setError('채팅방을 나갈 수 없습니다. 다시 시도해주세요.');
-        }
-      } catch (error) {
-        console.error('채팅방 나가기 오류:', error);
-        setError('채팅방을 나갈 수 없습니다. 다시 시도해주세요.');
-      }
-    }
+    return `${SERVER_URL}/images/profile/${relativePath}`;
   };
 
-  // 메시지 목록 최적화 (isCurrentUser 미리 계산)
-  const messages = useMemo(() => {
-    return messagesData.map(message => ({
-      ...message,
-      isCurrentUser: message.sender && message.sender.id.toString() === currentUserId
-    }));
-  }, [messagesData, currentUserId]);
+  // 이미지 오류 핸들러
+  const handleImageError = (event) => {
+    event.target.src = '/default-profile.png';
+  };
+
+  // 엔터 키 처리 함수
+  const handleKeyPress = (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleSendMessage();
+    }
+  };
 
   if (loading) {
     return (
@@ -318,22 +289,6 @@ const ChatRoom = () => {
         <div className="text-center">
           <div className="animate-spin h-8 w-8 border-4 border-blue-500 rounded-full border-t-transparent mx-auto"></div>
           <p className="mt-2 text-gray-600">채팅방을 불러오는 중...</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="h-screen flex items-center justify-center p-4">
-        <div className="text-center bg-red-100 p-4 rounded-lg max-w-md w-full">
-          <p className="text-red-700 mb-4">{error}</p>
-          <button 
-            onClick={() => navigate('/chats')}
-            className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600"
-          >
-            채팅 목록으로 돌아가기
-          </button>
         </div>
       </div>
     );
@@ -353,12 +308,6 @@ const ChatRoom = () => {
           
           {roomInfo && (
             <div className="flex items-center">
-              <img 
-                src={getProfileImageUrl(roomInfo.otherUserProfileImage)} 
-                alt={roomInfo.otherUserNickname} 
-                className="w-10 h-10 rounded-full object-cover mr-3"
-                onError={(e) => { e.target.src = '/default-profile.png' }}
-              />
               <div>
                 <p className="font-medium">{roomInfo.otherUserNickname}</p>
                 {roomInfo.postTitle && (
@@ -407,8 +356,7 @@ const ChatRoom = () => {
       {/* 메시지 목록 */}
       <div 
         ref={messagesContainerRef}
-        className="flex-1 overflow-y-auto p-4"
-        onScroll={handleScroll}
+        className="flex-1 overflow-y-auto p-4 pb-0"
       >
         {loadingMore && (
           <div className="text-center py-2">
@@ -426,17 +374,16 @@ const ChatRoom = () => {
           </button>
         )}
         
-        {/* 메시지 목록 */}
         {messages.map((message, index) => {
-          const isCurrentUser = message.isCurrentUser;
+          const isCurrentUser = message.sender?.id?.toString() === currentUserId;
           const showDate = isNewDate(message, messages[index - 1]);
           
           return (
-            <React.Fragment key={message.id}>
+            <React.Fragment key={`${message.id || 'temp'}-${index}-${message.sentAt || Date.now()}`}>
               {showDate && (
                 <div className="text-center my-3">
                   <span className="bg-gray-200 text-gray-600 text-xs px-3 py-1 rounded-full">
-                    {formatDate(message.sentAt || message.timestamp)}
+                    {formatDate(message.sentAt)}
                   </span>
                 </div>
               )}
@@ -444,15 +391,6 @@ const ChatRoom = () => {
               <div 
                 className={`flex mb-3 ${isCurrentUser ? 'justify-end' : 'justify-start'}`}
               >
-                {!isCurrentUser && (
-                  <img 
-                    src={getProfileImageUrl(message.sender?.profileImageUrl || roomInfo?.otherUserProfileImage)} 
-                    alt={message.sender?.nickname || roomInfo?.otherUserNickname}
-                    className="w-8 h-8 rounded-full object-cover mr-2 mt-1"
-                    onError={(e) => { e.target.src = '/default-profile.png' }}
-                  />
-                )}
-                
                 <div 
                   className={`max-w-[70%] ${isCurrentUser ? 'order-1' : 'order-2'}`}
                 >
@@ -471,7 +409,7 @@ const ChatRoom = () => {
                       isCurrentUser ? 'text-right' : 'text-left'
                     }`}
                   >
-                    {formatTime(message.sentAt || message.timestamp)}
+                    {formatTime(message.sentAt)}
                   </div>
                 </div>
               </div>
@@ -482,39 +420,48 @@ const ChatRoom = () => {
         <div ref={messagesEndRef} />
       </div>
       
-      {/* 웹소켓 연결 상태 표시 */}
+      {/* 연결 상태 표시 */}
       {!connected && (
         <div className="bg-yellow-100 text-yellow-800 text-xs text-center py-1">
           서버에 연결 중... 메시지 전송이 지연될 수 있습니다.
         </div>
       )}
       
+      {/* 에러 메시지 */}
+      {error && (
+        <div className="bg-red-100 text-red-800 text-xs text-center py-1">
+          {error}
+        </div>
+      )}
+      
       {/* 메시지 입력 */}
-      <div className="bg-white p-3 border-t">
+      <div className="bg-white p-3 border-t sticky bottom-0">
         <form 
           onSubmit={handleSendMessage}
-          className="flex items-center"
+          className="flex items-center gap-2"
         >
           <button 
             type="button"
-            className="p-2 text-gray-500"
+            className="p-2 text-gray-500 hover:bg-gray-100 rounded-full"
             onClick={() => alert('이미지 업로드 기능은 준비 중입니다.')}
           >
             <Image size={20} />
           </button>
           
-          <input
-            type="text"
+          <textarea
             value={newMessage}
             onChange={(e) => setNewMessage(e.target.value)}
+            onKeyPress={handleKeyPress}
             placeholder="메시지를 입력하세요..."
-            className="flex-1 border rounded-full px-4 py-2 mx-2 focus:outline-none focus:ring-2 focus:ring-blue-300"
+            className="flex-1 p-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none max-h-32"
+            rows={1}
+            style={{ minHeight: '40px', maxHeight: '120px' }}
           />
           
           <button 
             type="submit"
             className={`p-2 rounded-full ${
-              connected ? 'bg-blue-500 text-white' : 'bg-gray-300 text-gray-500'
+              connected ? 'bg-blue-500 text-white hover:bg-blue-600' : 'bg-gray-300 text-gray-500'
             }`}
             disabled={!newMessage.trim() || !connected}
           >

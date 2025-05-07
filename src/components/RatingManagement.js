@@ -1,5 +1,29 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Star, Edit, Trash2 } from 'lucide-react';
+
+
+
+// JWT 토큰 가져오기 함수
+const getToken = () => {
+  return localStorage.getItem('jwtToken'); // 로컬 스토리지에서 JWT 토큰 가져오기
+};
+
+// API 요청 헤더 설정
+
+const getAuthHeader = () => {
+  const token = getToken();
+  if (!token) {
+    throw new Error('인증 토큰이 없습니다. 로그인이 필요합니다.');
+  }
+  
+  // 토큰이 이미 'Bearer'로 시작하는지 확인
+  const tokenValue = token.startsWith('Bearer ') ? token : `Bearer ${token}`;
+  
+  return {
+    'Authorization': tokenValue,
+    'Content-Type': 'application/json'
+  };
+};
 
 // 커스텀 모달 컴포넌트
 const Modal = ({ isOpen, onClose, title, children }) => {
@@ -24,7 +48,7 @@ const Modal = ({ isOpen, onClose, title, children }) => {
 };
 
 // 별점 컴포넌트
-const StarRating = ({ rating, onRatingChange }) => {
+const StarRating = ({ rating, onRatingChange, readOnly = false }) => {
   const [hover, setHover] = useState(0);
 
   return (
@@ -33,9 +57,10 @@ const StarRating = ({ rating, onRatingChange }) => {
         <button
           key={star}
           className="focus:outline-none"
-          onClick={() => onRatingChange(star)}
-          onMouseEnter={() => setHover(star)}
-          onMouseLeave={() => setHover(0)}
+          onClick={() => !readOnly && onRatingChange(star)}
+          onMouseEnter={() => !readOnly && setHover(star)}
+          onMouseLeave={() => !readOnly && setHover(0)}
+          disabled={readOnly}
         >
           <Star
             className={`w-8 h-8 ${
@@ -50,20 +75,33 @@ const StarRating = ({ rating, onRatingChange }) => {
   );
 };
 
-// 리뷰 수정 모달 컴포넌트
-const EditReviewModal = ({ isOpen, onClose, transaction, onSubmit }) => {
-  const [comment, setComment] = useState(transaction?.comment || '');
-  const [rating, setRating] = useState(transaction?.rating || 0);
+// 리뷰 작성/수정 모달 컴포넌트
+const ReviewModal = ({ isOpen, onClose, review, postId, revieweeId, isEdit, onSubmit }) => {
+  const [comment, setComment] = useState(review?.comment || '');
+  const [rating, setRating] = useState(review?.rating || 0);
+
+  useEffect(() => {
+    if (review) {
+      setComment(review.comment || '');
+      setRating(review.rating || 0);
+    } else {
+      setComment('');
+      setRating(0);
+    }
+  }, [review]);
 
   const handleSubmit = () => {
-    onSubmit(transaction.id, { rating, comment });
+    const reviewData = {
+      rating: Number(rating),
+      comment: comment.trim()
+    };
+    
+    onSubmit(reviewData, postId, revieweeId, review?.id);
     onClose();
   };
 
-  if (!transaction) return null;
-
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title="리뷰 수정">
+    <Modal isOpen={isOpen} onClose={onClose} title={isEdit ? "리뷰 수정" : "리뷰 작성"}>
       <div className="space-y-4">
         <div>
           <label className="block text-sm font-medium mb-1">거래 만족도</label>
@@ -71,6 +109,7 @@ const EditReviewModal = ({ isOpen, onClose, transaction, onSubmit }) => {
             rating={rating}
             onRatingChange={setRating}
           />
+          <p className="text-xs text-gray-500 mt-1">별을 클릭하여 평가해주세요 (1-5점)</p>
         </div>
         <div>
           <label className="block text-sm font-medium mb-1">리뷰 내용</label>
@@ -93,7 +132,7 @@ const EditReviewModal = ({ isOpen, onClose, transaction, onSubmit }) => {
             disabled={rating === 0}
             className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 disabled:opacity-50"
           >
-            수정 완료
+            {isEdit ? "수정 완료" : "등록 완료"}
           </button>
         </div>
       </div>
@@ -102,53 +141,69 @@ const EditReviewModal = ({ isOpen, onClose, transaction, onSubmit }) => {
 };
 
 // 거래 아이템 컴포넌트
-const TransactionItem = ({ transaction, onRate, onEdit, onDelete }) => {
+const ReviewItem = ({ review, onEdit, onDelete, type }) => {
+  console.log('렌더링 중인 리뷰 데이터:', review); // 데이터 확인용 로그
+  
   return (
     <div className="p-4 border rounded-lg bg-white shadow-sm mb-4">
       <div className="flex items-center justify-between mb-4">
         <div>
-          <h3 className="font-semibold">{transaction.productName}</h3>
+          <h3 className="font-semibold">
+            게시글: {review.post?.title || '게시글 정보 없음'}
+          </h3>
           <p className="text-sm text-gray-500">
-            거래일: {transaction.date}
+            가격: {review.post?.price?.toLocaleString() || '가격 정보 없음'}원
           </p>
           <p className="text-sm text-gray-500">
-            거래자: {transaction.partnerName}
+            {type === 'sent' ? 
+              `받는 사람: ${review.reviewee?.nickname || '정보 없음'}` : 
+              `보낸 사람: ${review.reviewer?.nickname || '정보 없음'}`}
           </p>
         </div>
-        <div className="flex items-center space-x-2">
-          <button
-            onClick={() => onEdit(transaction)}
-            className="p-2 text-gray-400 hover:text-blue-500 rounded-full"
-            title="리뷰 수정"
-          >
-            <Edit className="w-5 h-5" />
-          </button>
-          <button
-            onClick={() => onDelete(transaction.id)}
-            className="p-2 text-gray-400 hover:text-red-500 rounded-full"
-            title="리뷰 삭제"
-          >
-            <Trash2 className="w-5 h-5" />
-          </button>
-        </div>
+        {type === 'sent' && (
+          <div className="flex items-center space-x-2">
+            <button
+              onClick={() => onEdit(review)}
+              className="p-2 text-gray-400 hover:text-blue-500 rounded-full"
+              title="리뷰 수정"
+            >
+              <Edit className="w-5 h-5" />
+            </button>
+            <button
+              onClick={() => onDelete(review.id)}
+              className="p-2 text-gray-400 hover:text-red-500 rounded-full"
+              title="리뷰 삭제"
+            >
+              <Trash2 className="w-5 h-5" />
+            </button>
+          </div>
+        )}
       </div>
       
       <div className="border-t pt-4">
         <div className="flex items-center justify-between">
           <div>
-            <p className="text-sm font-medium mb-2">거래 만족도 평가</p>
-            <StarRating
-              rating={transaction.rating}
-              onRatingChange={(rating) => onRate(transaction.id, rating)}
-            />
-            {transaction.comment && (
+            <p className="text-sm font-medium mb-2">
+              거래 만족도 평가: <span className="font-bold">{review.rating}점</span>
+            </p>
+            <div className="flex mb-2">
+              {[1, 2, 3, 4, 5].map((star) => (
+                <Star
+                  key={star}
+                  className={`w-5 h-5 ${
+                    star <= review.rating
+                      ? 'fill-yellow-400 text-yellow-400'
+                      : 'text-gray-300'
+                  }`}
+                />
+              ))}
+            </div>
+            {review.comment && (
               <div className="mt-2 text-sm text-gray-700">
-                {transaction.comment}
+                <p className="font-medium mb-1">리뷰 코멘트:</p>
+                <p className="bg-gray-50 p-2 rounded">{review.comment}</p>
               </div>
             )}
-          </div>
-          <div className="text-sm text-gray-500">
-            {transaction.rating ? '평가 완료' : '미평가'}
           </div>
         </div>
       </div>
@@ -156,100 +211,455 @@ const TransactionItem = ({ transaction, onRate, onEdit, onDelete }) => {
   );
 };
 
-// 메인 별점관리 컴포넌트
-const RatingManagement = () => {
-  // 거래 목록 상태
-  const [transactions, setTransactions] = useState([
-    {
-      id: 1,
-      productName: '아이폰 14 Pro',
-      date: '2024-01-15',
-      partnerName: '홍길동',
-      rating: 0,
-      comment: '',
-    },
-    {
-      id: 2,
-      productName: '맥북 프로 16인치',
-      date: '2024-01-14',
-      partnerName: '김철수',
-      rating: 4,
-      comment: '제품 상태가 좋고 거래가 원활했습니다.',
-    },
-  ]);
-
+// 메인 리뷰관리 컴포넌트
+const ReviewManagement = () => {
+  // 리뷰 목록 상태
+  const [sentReviews, setSentReviews] = useState([]);
+  const [receivedReviews, setReceivedReviews] = useState([]);
+  const [activeTab, setActiveTab] = useState('sent'); // 'sent' 또는 'received'
+  
   // 모달 상태
-  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
-  const [selectedTransaction, setSelectedTransaction] = useState(null);
+  const [isReviewModalOpen, setIsReviewModalOpen] = useState(false);
+  const [selectedReview, setSelectedReview] = useState(null);
+  const [isEdit, setIsEdit] = useState(false);
+  
+  // 새 리뷰 작성을 위한 상태
+  const [newReviewPostId, setNewReviewPostId] = useState('');
+  const [newRevieweeId, setNewRevieweeId] = useState('');
+  
+  // 로딩 상태
+  const [isLoading, setIsLoading] = useState(false);
+  
+  // 로그인 상태
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  
+  // 알림 상태
+  const [notification, setNotification] = useState({ show: false, message: '', type: '' });
+  
+  // 로그인 상태 확인
+  useEffect(() => {
+    const checkAuth = () => {
+      const token = localStorage.getItem('jwtToken');
+      if (!token) {
+        // 실제 구현에서는 navigate('/signin')을 사용할 수 있습니다.
+        console.warn('로그인이 필요합니다.');
+        return;
+      }
+      setIsLoggedIn(true);
+    };
+    
+    checkAuth();
+  }, []);
 
-  // 거래 평가 처리
-  const handleRate = (transactionId, rating) => {
-    setTransactions(prev =>
-      prev.map(t =>
-        t.id === transactionId
-          ? { ...t, rating }
-          : t
-      )
-    );
+  // 리뷰 목록 불러오기
+  const fetchReviews = async () => {
+    setIsLoading(true);
+    try {
+      // 요청 헤더 출력 (디버깅용)
+      const headers = getAuthHeader();
+      console.log('요청 헤더:', headers);
+
+      // 내가 보낸 리뷰 (try-catch로 각 요청 분리)
+      try {
+        // fetch API를 사용하여 요청
+        const response = await fetch('http://localhost:8080/api/reviews/sent', {
+          method: 'GET',
+          headers: getAuthHeader()
+        });
+        
+        if (!response.ok) {
+          throw new Error(`HTTP 오류: ${response.status}`);
+        }
+        
+        const data = await response.json();
+        console.log('보낸 리뷰 데이터:', data);
+        
+        const sentData = Array.isArray(data) ? data : [];
+        setSentReviews(sentData);
+      } catch (error) {
+        console.error('보낸 리뷰 로딩 오류:', error);
+        setSentReviews([]);
+      }
+      
+      // 내가 받은 리뷰 (try-catch로 각 요청 분리)
+      try {
+        // fetch API를 사용하여 요청
+        const response = await fetch('http://localhost:8080/api/reviews/received', {
+          method: 'GET',
+          headers: getAuthHeader()
+        });
+        
+        if (!response.ok) {
+          throw new Error(`HTTP 오류: ${response.status}`);
+        }
+        
+        const data = await response.json();
+        console.log('받은 리뷰 데이터:', data);
+        
+        const receivedData = Array.isArray(data) ? data : [];
+        setReceivedReviews(receivedData);
+      } catch (error) {
+        console.error('받은 리뷰 로딩 오류:', error);
+        setReceivedReviews([]);
+      }
+      
+      return true; // 최소 한 개의 요청이 성공하면 true 반환
+    } catch (error) {
+      console.error('리뷰 데이터 로딩 메인 오류:', error);
+      showNotification(`리뷰를 불러오는 중 오류가 발생했습니다: ${error.message}`, 'error');
+      return false; // 데이터 가져오기 실패
+    } finally {
+      setIsLoading(false);
+    }
   };
 
-  // 리뷰 수정 처리
-  const handleEditReview = (transaction) => {
-    setSelectedTransaction(transaction);
-    setIsEditModalOpen(true);
+  // 컴포넌트 마운트 시 리뷰 데이터 불러오기
+  useEffect(() => {
+    const loadInitialData = async () => {
+      try {
+        setIsLoading(true);
+        await fetchReviews();
+      } catch (error) {
+        console.error('초기 데이터 로딩 오류:', error);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    
+    // 로그인했을 때만 데이터 로드 시도
+    if (isLoggedIn) {
+      loadInitialData();
+    }
+  }, [isLoggedIn]);
+  
+  // 리뷰 데이터 확인용 로그
+  useEffect(() => {
+    console.log('현재 보낸 리뷰:', sentReviews);
+    console.log('현재 받은 리뷰:', receivedReviews);
+  }, [sentReviews, receivedReviews]);
+
+  // 알림 표시 함수
+  const showNotification = (message, type = 'success') => {
+    setNotification({ show: true, message, type });
+    setTimeout(() => {
+      setNotification({ show: false, message: '', type: '' });
+    }, 3000);
   };
 
-  // 리뷰 수정 제출 처리
-  const handleEditSubmit = (transactionId, { rating, comment }) => {
-    setTransactions(prev =>
-      prev.map(t =>
-        t.id === transactionId
-          ? { ...t, rating, comment }
-          : t
-      )
+  
+  
+  
+// const handleReviewSubmit = async (reviewData, postId, revieweeId, reviewId = null) => {
+//   try {
+//     // 입력값 타입 변환
+//     const numPostId = Number(postId);
+//     const numRevieweeId = Number(revieweeId);
+//     const numRating = Number(reviewData.rating) || 0;
+//     const comment = reviewData.comment || '';
+    
+//     // 기존 리뷰 확인
+//     const existingReview = sentReviews.find(review => 
+//       review.post && review.post.id === numPostId && 
+//       review.reviewee && review.reviewee.id === numRevieweeId
+//     );
+    
+//     let url, method;
+    
+//     if (existingReview || reviewId) {
+//       // 리뷰 수정 - @RequestBody가 없으므로 쿼리 파라미터 사용
+//       const targetReviewId = reviewId || existingReview.id;
+//       url = `http://localhost:8080/api/reviews/${targetReviewId}?rating=${numRating}&comment=${encodeURIComponent(comment)}`;
+//       method = 'PUT';
+//       console.log('리뷰 수정 URL:', url);
+//     } else {
+//       // 리뷰 생성 - @RequestBody가 없으므로 쿼리 파라미터 사용
+//       url = `http://localhost:8080/api/posts/${numPostId}/reviews/${numRevieweeId}?rating=${numRating}&comment=${encodeURIComponent(comment)}`;
+//       method = 'POST';
+//       console.log('리뷰 생성 URL:', url);
+//     }
+    
+//     // 요청 전송 - Content-Type을 application/x-www-form-urlencoded로 변경
+//     const response = await fetch(url, {
+//       method: method,
+//       headers: {
+//         'Authorization': getAuthHeader().Authorization,
+//         'Content-Type': 'application/x-www-form-urlencoded'
+//       }
+//       // 본문을 비워두고 쿼리 파라미터로 데이터 전송
+//     });
+    
+//     if (!response.ok) {
+//       const errorText = await response.text();
+//       console.error('서버 오류 응답:', errorText);
+//       throw new Error(`HTTP 오류: ${response.status} - ${errorText}`);
+//     }
+    
+//     showNotification(existingReview || reviewId ? '리뷰가 수정되었습니다.' : '리뷰가 등록되었습니다.');
+    
+//     // 리뷰 목록 다시 불러오기
+//     fetchReviews();
+//   } catch (error) {
+//     console.error('리뷰 제출 오류:', error);
+//     showNotification(`리뷰 제출 중 오류가 발생했습니다: ${error.message}`, 'error');
+//   }
+// };
+  
+const handleReviewSubmit = async (reviewData, postId, revieweeId, reviewId = null) => {
+  try {
+    // 입력값 타입 변환
+    const numPostId = Number(postId);
+    const numRevieweeId = Number(revieweeId);
+    const numRating = Number(reviewData.rating) || 0;
+    const comment = reviewData.comment || '';
+    
+    // 기존 리뷰 확인
+    const existingReview = sentReviews.find(review => 
+      review.post && review.post.id === numPostId && 
+      review.reviewee && review.reviewee.id === numRevieweeId
     );
+    
+    let url, method;
+    
+    if (existingReview || reviewId) {
+      // 리뷰 수정
+      const targetReviewId = reviewId || existingReview.id;
+      url = `http://localhost:8080/api/reviews/${targetReviewId}?rating=${numRating}&comment=${encodeURIComponent(comment)}`;
+      method = 'PUT';
+      console.log('리뷰 수정 URL:', url);
+    } else {
+      // 리뷰 생성
+      url = `http://localhost:8080/api/posts/${numPostId}/reviews/${numRevieweeId}?rating=${numRating}&comment=${encodeURIComponent(comment)}`;
+      method = 'POST';
+      console.log('리뷰 생성 URL:', url);
+    }
+    
+    // 요청 전송 - Content-Type을 제거하고 Authorization만 유지
+    const response = await fetch(url, {
+      method: method,
+      headers: {
+        'Authorization': getAuthHeader().Authorization
+      }
+      // 쿼리 파라미터로 데이터를 전송하므로 body는 필요 없음
+    });
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('서버 오류 응답:', errorText);
+      throw new Error(`HTTP 오류: ${response.status} - ${errorText}`);
+    }
+    
+    showNotification(existingReview || reviewId ? '리뷰가 수정되었습니다.' : '리뷰가 등록되었습니다.');
+    
+    // 리뷰 목록 다시 불러오기
+    fetchReviews();
+  } catch (error) {
+    console.error('리뷰 제출 오류:', error);
+    showNotification(`리뷰 제출 중 오류가 발생했습니다: ${error.message}`, 'error');
+  }
+};  
+const handleEditReview = (review) => {
+    setSelectedReview(review);
+    setIsEdit(true);
+    setIsReviewModalOpen(true);
+  };
+
+  // 새 리뷰 작성 모달 열기
+  const handleNewReview = () => {
+    setSelectedReview(null);
+    setIsEdit(false);
+    setIsReviewModalOpen(true);
   };
 
   // 리뷰 삭제 처리
-  const handleDeleteReview = (transactionId) => {
-    setTransactions(prev =>
-      prev.map(t =>
-        t.id === transactionId
-          ? { ...t, rating: 0, comment: '' }
-          : t
-      )
-    );
-  };
+  // const handleDeleteReview = async (reviewId) => {
+  //   if (!window.confirm('정말로 이 리뷰를 삭제하시겠습니까?')) return;
+    
+  //   try {
+  //     // 리뷰 삭제 API는 주어진 컨트롤러에 없으므로,
+  //     // 백엔드에 해당 API가 있다고 가정하고 구현
+  //     // await axios.delete(`/api/reviews/${reviewId}`, getAuthHeader());
+      
+  //     showNotification('리뷰가 삭제되었습니다.');
+      
+  //     // 리뷰 목록 다시 불러오기
+  //     fetchReviews();
+  //   } catch (error) {
+  //     console.error('Error deleting review:', error);
+  //     showNotification('리뷰 삭제 중 오류가 발생했습니다.', 'error');
+  //   }
+  // };
+
+  // 리뷰 삭제 처리
+const handleDeleteReview = async (reviewId) => {
+  if (!window.confirm('정말로 이 리뷰를 삭제하시겠습니까?')) return;
+  
+  try {
+    console.log(`리뷰 ID ${reviewId} 삭제 시도`);
+    
+    // DELETE 요청 전송
+    const response = await fetch(`http://localhost:8080/api/reviews/${reviewId}`, {
+      method: 'DELETE',
+      headers: getAuthHeader()
+    });
+    
+    // 응답 처리
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('삭제 요청 오류:', errorText);
+      throw new Error(`리뷰 삭제 실패: ${response.status} ${errorText}`);
+    }
+    
+    console.log('리뷰가 성공적으로 삭제되었습니다.');
+    showNotification('리뷰가 삭제되었습니다.');
+    
+    // 리뷰 목록 새로고침
+    fetchReviews();
+  } catch (error) {
+    console.error('Error deleting review:', error);
+    showNotification(`리뷰 삭제 중 오류가 발생했습니다: ${error.message}`, 'error');
+  }
+};
 
   return (
     <div className="container mx-auto px-4 py-8">
+      {/* 알림 */}
+      {notification.show && (
+        <div className={`fixed top-4 right-4 p-4 rounded-lg shadow-lg ${
+          notification.type === 'error' ? 'bg-red-500' : 'bg-green-500'
+        } text-white z-50`}>
+          {notification.message}
+        </div>
+      )}
+    
       <div className="mb-6">
-        <h1 className="text-2xl font-bold mb-2">거래 평가 관리</h1>
+        <h1 className="text-2xl font-bold mb-2">리뷰 관리</h1>
         <p className="text-gray-600">
-          최근 거래 내역과 평가를 확인하고 관리할 수 있습니다.
+          내가 작성한 리뷰와 받은 리뷰를 확인하고 관리할 수 있습니다.
         </p>
       </div>
+      
+      {!isLoggedIn ? (
+        <div className="p-6 bg-yellow-50 border border-yellow-200 rounded-lg text-center">
+          <p className="text-lg text-yellow-700 mb-4">로그인이 필요한 서비스입니다</p>
+          <p className="text-gray-600">리뷰 관리를 위해 먼저 로그인해주세요.</p>
+        </div>
+      ) : (
+        <>
+          {/* 새 리뷰 작성 영역 */}
+          <div className="mb-6 p-4 border rounded-lg bg-white shadow-sm">
+            <h2 className="text-lg font-semibold mb-3">새 리뷰 작성</h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+              <div>
+                <label className="block text-sm font-medium mb-1">게시글 ID</label>
+                <input
+                  type="number"
+                  value={newReviewPostId}
+                  onChange={(e) => setNewReviewPostId(e.target.value)}
+                  className="w-full p-2 border rounded"
+                  placeholder="리뷰할 게시글 ID 입력"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1">리뷰 대상자 ID</label>
+                <input
+                  type="number"
+                  value={newRevieweeId}
+                  onChange={(e) => setNewRevieweeId(e.target.value)}
+                  className="w-full p-2 border rounded"
+                  placeholder="리뷰 대상자 ID 입력"
+                />
+              </div>
+            </div>
+            <button
+              onClick={() => {
+                if (newReviewPostId && newRevieweeId) {
+                  setSelectedReview(null);
+                  setIsEdit(false);
+                  setIsReviewModalOpen(true);
+                } else {
+                  showNotification('게시글 ID와 리뷰 대상자 ID를 모두 입력해주세요.', 'error');
+                }
+              }}
+              className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 disabled:opacity-50"
+              disabled={isLoading}
+            >
+              {isLoading ? '처리 중...' : '리뷰 작성하기'}
+            </button>
+          </div>
 
-      <div className="space-y-4">
-        {transactions.map(transaction => (
-          <TransactionItem
-            key={transaction.id}
-            transaction={transaction}
-            onRate={handleRate}
-            onEdit={handleEditReview}
-            onDelete={handleDeleteReview}
-          />
-        ))}
-      </div>
+          {/* 탭 선택 */}
+          <div className="flex border-b mb-6">
+            <button
+              className={`px-4 py-2 ${activeTab === 'sent' ? 'border-b-2 border-blue-500 text-blue-500' : 'text-gray-500'}`}
+              onClick={() => setActiveTab('sent')}
+            >
+              내가 보낸 리뷰
+            </button>
+            <button
+              className={`px-4 py-2 ${activeTab === 'received' ? 'border-b-2 border-blue-500 text-blue-500' : 'text-gray-500'}`}
+              onClick={() => setActiveTab('received')}
+            >
+              내가 받은 리뷰
+            </button>
+          </div>
 
-      <EditReviewModal
-        isOpen={isEditModalOpen}
-        onClose={() => setIsEditModalOpen(false)}
-        transaction={selectedTransaction}
-        onSubmit={handleEditSubmit}
+          {/* 로딩 인디케이터 */}
+          {isLoading && (
+            <div className="text-center py-8">
+              <div className="inline-block animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-blue-500"></div>
+              <p className="mt-2 text-gray-600">로딩 중...</p>
+            </div>
+          )}
+
+          {/* 리뷰 목록 */}
+          {!isLoading && (
+            <div className="space-y-4">
+              {activeTab === 'sent' ? (
+                sentReviews.length > 0 ? (
+                  sentReviews.map(review => (
+                    <ReviewItem
+                      key={review.id}
+                      review={review}
+                      type="sent"
+                      onEdit={handleEditReview}
+                      onDelete={handleDeleteReview}
+                    />
+                  ))
+                ) : (
+                  <p className="text-gray-500 text-center py-8">작성한 리뷰가 없습니다.</p>
+                )
+              ) : (
+                receivedReviews.length > 0 ? (
+                  receivedReviews.map(review => (
+                    <ReviewItem
+                      key={review.id}
+                      review={review}
+                      type="received"
+                    />
+                  ))
+                ) : (
+                  <p className="text-gray-500 text-center py-8">받은 리뷰가 없습니다.</p>
+                )
+              )}
+            </div>
+          )}
+        </>
+      )}
+
+      
+
+      {/* 리뷰 작성/수정 모달 */}
+      <ReviewModal
+        isOpen={isReviewModalOpen}
+        onClose={() => setIsReviewModalOpen(false)}
+        review={selectedReview}
+        postId={selectedReview?.postId || newReviewPostId}
+        revieweeId={selectedReview?.revieweeId || newRevieweeId}
+        isEdit={isEdit}
+        onSubmit={handleReviewSubmit}
       />
     </div>
   );
 };
 
-export default RatingManagement;
+export default ReviewManagement;

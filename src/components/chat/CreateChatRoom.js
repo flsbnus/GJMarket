@@ -37,7 +37,7 @@ const CreateChatRoom = () => {
         const response = await fetch(`${SERVER_URL}/api/posts/${postId}`, {
           method: 'GET',
           headers: {
-            'Authorization': token,
+            'Authorization': `${token}`,
             'Accept': 'application/json'
           }
         });
@@ -66,38 +66,6 @@ const CreateChatRoom = () => {
     fetchPostInfo();
   }, [postId, navigate]);
 
-  // 이미 존재하는 채팅방 확인 (URL에 postId가 있는 경우)
-  useEffect(() => {
-    const checkExistingChatRoom = async () => {
-      if (!postId) return;
-      
-      try {
-        const token = localStorage.getItem('jwtToken');
-        
-        const response = await fetch(`${SERVER_URL}/api/posts/${postId}/chatroom`, {
-          method: 'GET',
-          headers: {
-            'Authorization': token,
-            'Accept': 'application/json'
-          }
-        });
-        
-        if (response.ok) {
-          const data = await response.json();
-          
-          // 이미 채팅방이 존재하면 해당 채팅방으로 리디렉션
-          if (data && data.id) {
-            navigate(`/chatroom/${data.id}`);
-          }
-        }
-      } catch (error) {
-        console.error('채팅방 확인 오류:', error);
-      }
-    };
-    
-    checkExistingChatRoom();
-  }, [postId, navigate]);
-
   // 모든 게시물 목록 가져오기 (postId가 없는 경우, 게시물 선택 화면을 위함)
   useEffect(() => {
     const fetchPosts = async () => {
@@ -114,7 +82,7 @@ const CreateChatRoom = () => {
         const response = await fetch(`${SERVER_URL}/api/posts`, {
           method: 'GET',
           headers: {
-            'Authorization': token,
+            'Authorization': `${token}`,
             'Accept': 'application/json'
           }
         });
@@ -127,7 +95,7 @@ const CreateChatRoom = () => {
         console.log('서버 응답 데이터:', data);
         
         // 페이지네이션 응답 구조에서 content 배열 추출
-        const postsArray = data.content || [];
+        const postsArray = data.content || data; // 서버 응답에 따라 조정
         
         // 현재 사용자의 게시물 제외
         const currentUserId = localStorage.getItem('userId');
@@ -137,13 +105,12 @@ const CreateChatRoom = () => {
         
         setPosts(filteredData);
         setFilteredPosts(filteredData);
-        setLoading(false);
       } catch (error) {
         console.error('게시물 목록 로딩 오류:', error);
         setError(error.message);
-        setLoading(false);
       } finally {
         setLoadingPosts(false);
+        setLoading(false);
       }
     };
     
@@ -156,7 +123,7 @@ const CreateChatRoom = () => {
       setFilteredPosts(posts);
     } else {
       const filtered = posts.filter(post => 
-        post.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        (post.title && post.title.toLowerCase().includes(searchTerm.toLowerCase())) ||
         (post.content && post.content.toLowerCase().includes(searchTerm.toLowerCase())) ||
         (post.user && post.user.nickname && post.user.nickname.toLowerCase().includes(searchTerm.toLowerCase()))
       );
@@ -180,7 +147,7 @@ const CreateChatRoom = () => {
       const response = await fetch(`${SERVER_URL}/api/post/${postIdToUse}/chatroom`, {
         method: 'POST',
         headers: {
-          'Authorization': token
+          'Authorization': `${token}`
         }
       });
       
@@ -202,9 +169,25 @@ const CreateChatRoom = () => {
   
   // 프로필 이미지 URL 생성 함수
   const getProfileImageUrl = (relativePath) => {
-    if (!relativePath) return '/default-profile.png';
+    if (!relativePath) return `${SERVER_URL}/images/profile/default-profile.png`;
     if (relativePath.startsWith('http')) return relativePath;
-    return `${SERVER_URL}/images${relativePath}`;
+    return `${SERVER_URL}/images/profile/${relativePath}`;
+  };
+
+  // 게시물 이미지 URL 생성 함수
+  const getPostImageUrl = (relativePath) => {
+    if (!relativePath) return `${SERVER_URL}/images/default-post.png`;
+    if (relativePath.startsWith('http')) return relativePath;
+    return `${SERVER_URL}/images/${relativePath}`;
+  };
+
+  // 이미지 오류 핸들러
+  const handleImageError = (event) => {
+    if (event.target.src.includes('/profile/')) {
+      event.target.src = `${SERVER_URL}/images/profile/default-profile.png`;
+    } else {
+      event.target.src = `${SERVER_URL}/images/default-post.png`;
+    }
   };
 
   // 가격 포맷팅 함수
@@ -257,7 +240,7 @@ const CreateChatRoom = () => {
                   src={getProfileImageUrl(postInfo.user?.profileImageUrl)} 
                   alt={postInfo.user?.nickname} 
                   className="w-10 h-10 rounded-full object-cover mr-3"
-                  onError={(e) => { e.target.src = '/default-profile.png' }}
+                  onError={handleImageError}
                 />
                 <div>
                   <p className="font-medium">{postInfo.user?.nickname}</p>
@@ -278,10 +261,10 @@ const CreateChatRoom = () => {
               {postInfo.images && postInfo.images.length > 0 && (
                 <div className="w-full h-40 bg-gray-100 rounded overflow-hidden mb-3">
                   <img 
-                    src={getProfileImageUrl(postInfo.images[0].imageUrl)} 
+                    src={getPostImageUrl(postInfo.images[0].imageUrl)} 
                     alt={postInfo.title} 
                     className="w-full h-full object-cover"
-                    onError={(e) => { e.target.src = '/default-thumbnail.png' }}
+                    onError={handleImageError}
                   />
                 </div>
               )}
@@ -369,10 +352,10 @@ const CreateChatRoom = () => {
                     {post.images && post.images.length > 0 ? (
                       <div className="w-20 h-20 bg-gray-100 rounded overflow-hidden mr-3 flex-shrink-0">
                         <img 
-                          src={getProfileImageUrl(post.images[0].imageUrl)} 
+                          src={getPostImageUrl(post.images[0].imageUrl)} 
                           alt={post.title} 
                           className="w-full h-full object-cover"
-                          onError={(e) => { e.target.src = '/default-thumbnail.png' }}
+                          onError={handleImageError}
                         />
                       </div>
                     ) : (

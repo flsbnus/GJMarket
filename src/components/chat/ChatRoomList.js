@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { MessageCircle, Clock, User } from 'lucide-react';
+import { MessageCircle } from 'lucide-react';
 
 const ChatRoomList = () => {
   const navigate = useNavigate();
@@ -25,9 +25,11 @@ const ChatRoomList = () => {
         const response = await fetch(`${SERVER_URL}/api/users/${userId}/chatrooms`, {
           method: 'GET',
           headers: {
-            'Authorization': token,
-            'Accept': 'application/json'
-          }
+            'Authorization': `${token}`,
+            'Accept': 'application/json',
+            'Content-Type': 'application/json'
+          },
+          mode: 'cors'
         });
         
         if (!response.ok) {
@@ -35,7 +37,30 @@ const ChatRoomList = () => {
         }
         
         const data = await response.json();
-        setChatRooms(data);
+        console.log('채팅방 목록:', data);
+        
+        // 채팅방 목록 처리
+        const processedChatRooms = data.map(room => {
+          // 현재 사용자가 판매자인지 구매자인지 확인
+          const isCurrentUserSeller = room.seller && 
+                                      room.seller.id && 
+                                      room.seller.id.toString() === userId;
+          
+          // 상대방 정보 설정
+          const otherUser = isCurrentUserSeller ? room.buyer : room.seller;
+          
+          return {
+            id: room.id,
+            postId: room.postId,
+            otherUserNickname: otherUser ? otherUser.nickname : '상대방',
+            otherUserProfileImage: otherUser ? otherUser.profileImageUrl : null,
+            lastMessage: '', // 서버에서 제공하지 않는 경우
+            lastMessageTime: room.createdAt, // 마지막 메시지 시간이 없는 경우 채팅방 생성 시간 사용
+            unreadCount: 0 // 서버에서 제공하지 않는 경우
+          };
+        });
+        
+        setChatRooms(processedChatRooms);
       } catch (error) {
         console.error('채팅방 목록 로딩 오류:', error);
         setError(error.message);
@@ -49,6 +74,8 @@ const ChatRoomList = () => {
   
   // 날짜 포맷팅 함수
   const formatDate = (dateString) => {
+    if (!dateString) return '';
+    
     const date = new Date(dateString);
     const now = new Date();
     
@@ -72,20 +99,20 @@ const ChatRoomList = () => {
     navigate(`/chatroom/${chatRoomId}`);
   };
   
-  // 프로필 이미지 URL 생성 함수 - 수정됨
+  // 프로필 이미지 URL 생성 함수
   const getProfileImageUrl = (relativePath) => {
-    if (!relativePath) return '/default-profile.png';
+    if (!relativePath) return `${SERVER_URL}/images/profile/default-profile.png`;
     if (relativePath.startsWith('http')) return relativePath;
-    return `${SERVER_URL}/images${relativePath}`;
+    return `${SERVER_URL}/images/profile/${relativePath}`;
   };
 
-  // 이미지 오류 핸들러 - 수정됨
+  // 이미지 오류 핸들러
   const handleImageError = (event) => {
     // 이미 기본 이미지로 설정되어 있다면 추가 변경 방지
     if (event.target.src.includes('default-profile.png')) {
       return;
     }
-    event.target.src = '/default-profile.png';
+    event.target.src = `${SERVER_URL}/images/profile/default-profile.png`;
   };
 
   if (loading) {
