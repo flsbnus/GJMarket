@@ -420,8 +420,8 @@ const PostDetail = () => {
 
   // 채팅창 토글
   const toggleChat = async () => {
-    if (!chatRoom) {
-      await createChatRoom();
+      if (!chatRoom) {
+        await createChatRoom();
     }
     navigate(`/chatroom/${chatRoom.id}`);
   };

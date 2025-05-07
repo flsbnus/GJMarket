@@ -114,7 +114,7 @@ export const connectWebSocket = (roomId, token) => {
           const delay = Math.min(1000 * Math.pow(2, reconnectAttempts - 1), 4000);
           reconnectTimeout = setTimeout(() => {
             if (token) {
-              connectWebSocket(roomId, token);
+            connectWebSocket(roomId, token);
             }
           }, delay);
         } else {

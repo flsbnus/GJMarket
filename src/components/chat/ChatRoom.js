@@ -22,19 +22,19 @@ const ChatRoom = () => {
   // 웹소켓 연결 설정
   useEffect(() => {
     if (!roomId) return;
-
+    
     const token = localStorage.getItem('jwtToken');
     if (!token) {
       navigate('/signin');
       return;
     }
-
+    
     // 웹소켓 연결
     const connect = () => {
-      console.log('채팅방 연결 시도:', roomId);
-      connectWebSocket(roomId, token);
+    console.log('채팅방 연결 시도:', roomId);
+    connectWebSocket(roomId, token);
     };
-
+  
     // 메시지 리스너 설정
     const handleMessage = (data) => {
       console.log('메시지 수신:', data);
@@ -47,7 +47,7 @@ const ChatRoom = () => {
       });
       scrollToBottom();
     };
-
+    
     // 연결 상태 변경 리스너
     const handleConnectionChange = (event) => {
       setConnected(event.detail.connected);
@@ -72,19 +72,19 @@ const ChatRoom = () => {
       disconnectWebSocket();
     };
   }, [roomId, navigate]);
-
+  
   // 최근 메시지 로드
   useEffect(() => {
     const fetchRecentMessages = async () => {
       if (!roomId) return;
-
+      
       try {
         const token = localStorage.getItem('jwtToken');
         if (!token) {
           navigate('/signin');
           return;
         }
-
+        
         setLoading(true);
         const response = await fetch(`${SERVER_URL}/api/chatroom/${roomId}/recent?size=20`, {
           headers: {
@@ -92,11 +92,11 @@ const ChatRoom = () => {
             'Accept': 'application/json'
           }
         });
-
+        
         if (!response.ok) {
           throw new Error('채팅 메시지를 불러오는데 실패했습니다.');
         }
-
+        
         const data = await response.json();
         // 메시지를 날짜 최신순으로 정렬
         const sortedMessages = data.sort((a, b) => {
@@ -114,10 +114,10 @@ const ChatRoom = () => {
         setLoading(false);
       }
     };
-
+    
     fetchRecentMessages();
   }, [roomId, SERVER_URL, navigate]);
-
+  
   // 채팅방 정보 구성
   const constructRoomInfo = (messages) => {
     if (!messages || messages.length === 0) {
@@ -128,15 +128,15 @@ const ChatRoom = () => {
       });
       return;
     }
-
+    
     try {
       const otherUserMessage = messages.find(msg => 
         msg.sender && msg.sender.id && msg.sender.id.toString() !== currentUserId
       );
-
+      
       const firstMessage = messages[0];
       const chatRoomInfo = firstMessage.chatRoom || { id: roomId };
-
+      
       setRoomInfo({
         id: chatRoomInfo.id || roomId,
         postId: chatRoomInfo.postId,
@@ -152,15 +152,15 @@ const ChatRoom = () => {
       });
     }
   };
-
+  
   // 이전 메시지 로드
   const loadPreviousMessages = async () => {
     if (loadingMore || !hasMore || messages.length === 0) return;
-
+    
     try {
       const token = localStorage.getItem('jwtToken');
       const oldestMessageId = messages[0].id;
-
+      
       setLoadingMore(true);
       const response = await fetch(`${SERVER_URL}/api/chatroom/${roomId}/before/${oldestMessageId}?size=20`, {
         headers: {
@@ -168,11 +168,11 @@ const ChatRoom = () => {
           'Accept': 'application/json'
         }
       });
-
+      
       if (!response.ok) {
         throw new Error('이전 메시지를 불러오는데 실패했습니다.');
       }
-
+      
       const data = await response.json();
       
       if (data.length === 0) {
@@ -195,7 +195,7 @@ const ChatRoom = () => {
       setLoadingMore(false);
     }
   };
-
+  
   // 스크롤 관련 함수들
   const scrollToBottom = () => {
     if (messagesContainerRef.current) {
@@ -213,18 +213,18 @@ const ChatRoom = () => {
       scrollToBottom();
     }
   }, [messages]);
-
+  
   // 메시지 전송
   const handleSendMessage = (e) => {
     if (e) {
-      e.preventDefault();
+    e.preventDefault();
     }
     
     if (!newMessage.trim() || !connected) return;
     
     try {
       sendMessage(newMessage.trim());
-      setNewMessage('');
+        setNewMessage('');
       // 메시지 전송 후 스크롤
       setTimeout(scrollToBottom, 100);
     } catch (error) {
@@ -232,14 +232,14 @@ const ChatRoom = () => {
       setError('메시지 전송에 실패했습니다.');
     }
   };
-
+  
   // 날짜 포맷팅 함수들
   const formatTime = (dateString) => {
     if (!dateString) return '';
     const date = new Date(dateString);
     return date.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' });
   };
-
+  
   const formatDate = (dateString) => {
     if (!dateString) return '';
     const date = new Date(dateString);
@@ -255,21 +255,21 @@ const ChatRoom = () => {
     
     return currentDate !== previousDate;
   };
-
+  
   // 채팅방 나가기
   const leaveRoom = () => {
     if (window.confirm('채팅방을 나가시겠습니까?')) {
       navigate('/chats');
     }
   };
-
+  
   // 프로필 이미지 URL 생성 함수
   const getProfileImageUrl = (relativePath) => {
     if (!relativePath) return '/default-profile.png';
     if (relativePath.startsWith('http')) return relativePath;
     return `${SERVER_URL}/images/profile/${relativePath}`;
   };
-
+  
   // 이미지 오류 핸들러
   const handleImageError = (event) => {
     event.target.src = '/default-profile.png';
